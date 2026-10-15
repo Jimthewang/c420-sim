@@ -11,6 +11,8 @@ export const DEFAULT_SETTINGS: SailingSettings = {
   shifts: true, // Slowly change the wind direction around its average.
   gusts: true, // Moving puffs and lulls change local wind strength.
   crewWeightKg: 130, // Combined skipper and crew weight, added to the hull mass.
+  autoCrew: true, // The crew trims the jib and moves weight unless manual handling is selected.
+  spinnaker: false, // Use the college main-and-jib rig by default.
 };
 
 export const ENVIRONMENT_CONFIG = {
@@ -39,4 +41,10 @@ export const ENVIRONMENT_CONFIG = {
   waveDistortionPerKnot: 0.11, // Each additional knot makes the visible surface rougher.
   waveTextureScaleBase: 1.5, // Starting scale of the visible water ripples.
   waveTextureScalePerKnot: 0.035, // Wind changes the visual ripple scale; wave forces arrive in a later phase.
+  windShadowMaxReduction: 0.35, // A close covering boat can remove at most 35 percent of local wind speed.
+  windShadowLengthM: 55, // Disturbed air fades out within this distance downwind of a boat.
+  windShadowDecayM: 25, // Wake strength fades progressively farther from the other boat.
+  windShadowInitialWidthM: 2.2, // Width of the disturbed-air plume just behind the sail plan.
+  windShadowSpread: 0.16, // The disturbed-air plume widens with distance downwind.
+  windShadowIgnoreRadiusM: 2.5, // Ignore coincident sources so a boat does not shade itself.
 };

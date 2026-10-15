@@ -1,14 +1,16 @@
 import * as THREE from 'three';
 import { BOAT_CONFIG } from '../config/boat';
 import type { BoatState } from '../physics/types';
+import { createSailor } from './crew';
 
 /** The model faces local north (-z); its dimensions are in metres. */
-export function createDinghy() {
+export function createDinghy(options: { simplified?: boolean; color?: number } = {}) {
   const { lengthM: length, beamM: beam, mastHeightM: mastTop, boomHeightM: boomHeight, mainFootM: mainFoot } = BOAT_CONFIG;
   const boat = new THREE.Group();
+  const essential = new Set<THREE.Object3D>();
   const white = new THREE.MeshStandardMaterial({ color: 0xf1f0e8, roughness: 0.42 });
   const cockpit = new THREE.MeshStandardMaterial({ color: 0xd2d8d4, roughness: 0.85 });
-  const dark = new THREE.MeshStandardMaterial({ color: 0x253b43, roughness: 0.65 });
+  const dark = new THREE.MeshStandardMaterial({ color: options.color ?? 0x253b43, roughness: 0.65 });
   const aluminum = new THREE.MeshStandardMaterial({ color: 0x9daeb4, metalness: 0.75, roughness: 0.3 });
   const rope = new THREE.LineBasicMaterial({ color: 0x525b58, transparent: true, opacity: 0.62 });
   const halfLength = length / 2;
@@ -65,7 +67,7 @@ export function createDinghy() {
   // Double-sided shell also shows the inside above the cockpit sole.
   const hullMaterial = white.clone();
   hullMaterial.side = THREE.DoubleSide;
-  mesh(hullGeometry, hullMaterial);
+  essential.add(mesh(hullGeometry, hullMaterial));
 
   // Side decks leave an actual open cockpit, with a raised forward buoyancy tank.
   for (const side of [-1, 1]) {
@@ -107,9 +109,9 @@ export function createDinghy() {
   const blade = mesh(new THREE.BoxGeometry(0.035, 0.8, 0.28), white, rudder);
   blade.position.set(0, -0.38, 0.06);
   spar(new THREE.Vector3(0, 0.07, 0), new THREE.Vector3(0, 0.14, -0.92), 0.022, dark, rudder);
-  spar(new THREE.Vector3(0, 0.14, -0.8), new THREE.Vector3(-0.47, 0.18, -1.27), 0.012, dark, rudder);
+  const tillerExtension = spar(new THREE.Vector3(0, 0.32, 1.35), new THREE.Vector3(-0.47, 0.48, 1.45), 0.012, dark);
 
-  spar(new THREE.Vector3(0, 0.31, mastZ), new THREE.Vector3(0, mastTop, mastZ), 0.033);
+  essential.add(spar(new THREE.Vector3(0, 0.31, mastZ), new THREE.Vector3(0, mastTop, mastZ), 0.033));
   const spreaderY = mastTop * 0.52;
   for (const side of [-1, 1]) {
     spar(new THREE.Vector3(0, spreaderY, mastZ), new THREE.Vector3(side * 0.42, spreaderY - 0.025, mastZ + 0.08), 0.012);
@@ -138,6 +140,10 @@ export function createDinghy() {
   paint.fillText('USA', 45, 505);
   paint.font = '500 92px Arial';
   paint.fillText('14', 75, 610);
+  if (options.color !== undefined) {
+    paint.fillStyle = `#${new THREE.Color(options.color).getHexString()}`;
+    paint.fillRect(0, 920, 512, 24);
+  }
   const sailTexture = new THREE.CanvasTexture(sailCanvas);
   sailTexture.colorSpace = THREE.SRGBColorSpace;
   sailTexture.anisotropy = 4;
@@ -151,8 +157,8 @@ export function createDinghy() {
   boat.add(mainRig);
   spar(new THREE.Vector3(), new THREE.Vector3(0, 0, mainFoot + 0.05), 0.028, aluminum, mainRig);
   const mainHeight = mastTop - boomHeight - 0.04;
-  const rows = 18;
-  const columns = 12;
+  const rows = options.simplified ? 9 : 18;
+  const columns = options.simplified ? 6 : 12;
   const sailIndex: number[] = [];
   const uv: number[] = [];
   for (let row = 0; row <= rows; row++) {
@@ -171,9 +177,9 @@ export function createDinghy() {
   mainGeometry.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array((rows + 1) * (columns + 1) * 3), 3));
   mainGeometry.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
   mainGeometry.setIndex(sailIndex);
-  mesh(mainGeometry, sailMaterial, mainRig);
+  essential.add(mesh(mainGeometry, sailMaterial, mainRig));
   const jibGeometry = mainGeometry.clone();
-  mesh(jibGeometry, jibMaterial);
+  essential.add(mesh(jibGeometry, jibMaterial));
   const telltales = [-1, 1].map((side) => ({
     side,
     main: line([[0, 0, 0], [0, 0, 0]], new THREE.LineBasicMaterial({ color: side > 0 ? 0x43805c : 0xb95c4d }), mainRig),
@@ -182,15 +188,72 @@ export function createDinghy() {
   const mainSheet = line([[0, boomHeight, 1], [0, 0.3, 0.8]]);
   const jibSheets = [-1, 1].map((side) => line([[0, 0.55, -0.45], [side * 0.57, 0.39, 0.03]]));
 
-  function update(state: BoatState) {
-    boat.position.set(state.position.x, 0, state.position.z);
-    boat.rotation.y = -state.heading;
+  const skipper = createSailor(options.color ?? 0x616e50, !!options.simplified);
+  const crew = createSailor(0xd0c9b2, !!options.simplified);
+  boat.add(skipper.object, crew.object);
+  const spinGeometry = new THREE.BufferGeometry();
+  const spinPositions: number[] = [];
+  const spinColors: number[] = [];
+  const spinIndices: number[] = [];
+  for (let row = 0; row <= 12; row++) {
+    const h = row / 12;
+    for (let column = 0; column <= 16; column++) {
+      const f = column / 16;
+      spinPositions.push(Math.sin(h * Math.PI / 2) * 1.45 * (f * 2 - 1), jibTop - 3.55 * h,
+        mastZ - 0.2 - 1.35 * Math.sin(h * Math.PI) * Math.sin(f * Math.PI) - h * 0.85);
+      const color = new THREE.Color(f < 0.33 ? 0xc76d52 : f > 0.66 ? 0x466a7c : 0xf5ede0);
+      spinColors.push(color.r, color.g, color.b);
+      if (row < 12 && column < 16) {
+        const a = row * 17 + column;
+        spinIndices.push(a, a + 17, a + 1, a + 1, a + 17, a + 18);
+      }
+    }
+  }
+  spinGeometry.setAttribute('position', new THREE.Float32BufferAttribute(spinPositions, 3));
+  spinGeometry.setAttribute('color', new THREE.Float32BufferAttribute(spinColors, 3));
+  spinGeometry.setIndex(spinIndices);
+  spinGeometry.computeVertexNormals();
+  const spinnaker = mesh(spinGeometry, new THREE.MeshStandardMaterial({ vertexColors: true, side: THREE.DoubleSide, roughness: 0.9 }));
+  essential.add(spinnaker);
+  spinnaker.visible = false;
+  const poleStart = new THREE.Vector3(0, boomHeight + 0.15, mastZ);
+  const poleEnd = new THREE.Vector3(-1.45, jibTop - 3.55, mastZ - 1.05);
+  const poleLength = poleStart.distanceTo(poleEnd);
+  const pole = spar(poleStart, poleEnd, 0.018);
+  const spinSheets = [-1, 1].map((side) => line([[side * 1.45, jibTop - 3.55, mastZ - 1.05], [side * 0.65, 0.42, 0.4]]));
+
+  if (options.simplified) {
+    const remove: THREE.Object3D[] = [];
+    boat.traverse((part) => {
+      if ((part instanceof THREE.Mesh || part instanceof THREE.Line) && !essential.has(part)
+        && part.parent !== skipper.object && part.parent !== crew.object) remove.push(part);
+    });
+    remove.forEach((part) => {
+      part.removeFromParent();
+      if (part instanceof THREE.Mesh || part instanceof THREE.Line) part.geometry.dispose();
+    });
+  }
+
+  function update(state: BoatState, deploySpinnaker = false, trueWindAngleDeg = 0) {
+    boat.position.set(state.position.x, state.planing * 0.055, state.position.z);
+    boat.rotation.set(state.planing * 0.045, -state.heading, -state.heel, 'YXZ');
+    board.scale.y = 0.12 + state.centerboard * 0.88;
+    board.position.y = -0.08 - state.centerboard * 0.55;
+    skipper.update(state, 'skipper');
+    crew.update(state, 'crew');
+    spinnaker.visible = deploySpinnaker && Math.abs(trueWindAngleDeg) > BOAT_CONFIG.spinnakerMinAngleDeg && !state.capsized;
+    pole.visible = spinnaker.visible && !options.simplified;
+    spinSheets.forEach((sheet) => { sheet.visible = pole.visible; });
     rudder.rotation.y = state.rudder;
     mainRig.rotation.y = state.main.angle;
     const mainPosition = mainGeometry.getAttribute('position') as THREE.BufferAttribute;
     const jibPosition = jibGeometry.getAttribute('position') as THREE.BufferAttribute;
     const mainSide = Math.sign(state.main.angle) || 1;
     const jibSide = Math.sign(state.jib.angle) || 1;
+    poleEnd.x = -mainSide * 1.45;
+    pole.position.copy(poleStart).lerp(poleEnd, 0.5);
+    pole.scale.y = poleStart.distanceTo(poleEnd) / poleLength;
+    pole.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), poleEnd.clone().sub(poleStart).normalize());
     for (let row = 0; row <= rows; row++) {
       const h = row / rows;
       for (let column = 0; column <= columns; column++) {
@@ -228,7 +291,13 @@ export function createDinghy() {
       jib.geometry.setFromPoints([start, end]);
     }
     const sheetPoint = new THREE.Vector3(0, 0, mainFoot * 0.78).applyAxisAngle(new THREE.Vector3(0, 1, 0), state.main.angle);
-    mainSheet.geometry.setFromPoints([new THREE.Vector3(sheetPoint.x, boomHeight, mastZ + sheetPoint.z), new THREE.Vector3(0, 0.3, 0.8)]);
+    const skipperHandX = THREE.MathUtils.clamp(state.crew.skipperX, -0.65, 0.65) * 0.5;
+    mainSheet.geometry.setFromPoints([new THREE.Vector3(sheetPoint.x, boomHeight, mastZ + sheetPoint.z), new THREE.Vector3(0, 0.3, 0.8), new THREE.Vector3(skipperHandX, 0.48, 0.58 + state.crew.foreAft)]);
+    const tillerTip = new THREE.Vector3(0, 0.14, -0.8).applyAxisAngle(new THREE.Vector3(0, 1, 0), state.rudder).add(rudder.position);
+    const tillerHand = new THREE.Vector3(skipperHandX, 0.48, 1.45 + state.crew.foreAft);
+    tillerExtension.position.copy(tillerTip).lerp(tillerHand, 0.5);
+    tillerExtension.scale.y = tillerTip.distanceTo(tillerHand) / 0.51;
+    tillerExtension.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), tillerHand.sub(tillerTip).normalize());
     const clew = new THREE.Vector3().fromBufferAttribute(jibPosition, columns);
     jibSheets.forEach((sheet, index) => sheet.geometry.setFromPoints([clew, new THREE.Vector3(index === 0 ? -0.57 : 0.57, 0.39, 0.03)]));
   }

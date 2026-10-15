@@ -20,9 +20,32 @@ export interface BoatState {
   rudder: number;
   main: SailState;
   jib: SailState;
+  heel: number;
+  rollRate: number;
+  centerboard: number;
+  jibSheet: number;
+  capsized: boolean;
+  rightingProgress: number;
+  planing: number;
+  /** Crew X positions are metres to starboard; foreAft is metres aft of the normal position. */
+  crew: { skipperX: number; crewX: number; foreAft: number; hike: number };
+  tackCount: number;
+  gybeCount: number;
+  lastTackTime: number;
+  /** Internal maneuver bookkeeping; callers need not change these. */
+  previousWindSide: number;
+  rollTackEnergy: number;
 }
 
-export interface Controls { steer: number; mainSheet: number }
+export interface Controls {
+  steer: number;
+  mainSheet: number;
+  board?: number;
+  jibSheet?: number;
+  hike?: number;
+  righting?: boolean;
+  rollTack?: boolean;
+}
 
 export interface SailingSettings {
   windSpeedKnots: number;
@@ -30,6 +53,9 @@ export interface SailingSettings {
   shifts: boolean;
   gusts: boolean;
   crewWeightKg: number;
+  autoCrew?: boolean;
+  spinnaker?: boolean;
+  windShadows?: { position: Vec2; heading: number }[];
 }
 
 export interface WindSample { velocity: Vec2; speed: number; direction: number; gust: number }
@@ -49,6 +75,11 @@ export interface Telemetry {
   hullDrag: number;
   main: SailState;
   jib: SailState;
+  heelDeg: number;
+  heelingMoment: number;
+  rightingMoment: number;
+  planing: number;
+  windShadow: number;
 }
 
 export type CameraMode = 'chase' | 'tactical';

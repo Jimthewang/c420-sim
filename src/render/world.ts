@@ -6,6 +6,8 @@ import { ENVIRONMENT_CONFIG } from '../config/environment';
 import { sampleWind } from '../physics/sailing';
 import type { BoatState, CameraMode, SailingSettings, Telemetry } from '../physics/types';
 import { createDinghy } from './boat';
+import { boatMarker, createCourseScene, disposeObject } from './course';
+import type { GraphicsQuality, RenderCourse, RenderExtras } from './types';
 
 function makeWaterNormals() {
   const size = 128;
@@ -80,6 +82,27 @@ export function createWorld(canvas: HTMLCanvasElement) {
   scene.add(sunlight, sunlight.target);
   const dinghy = createDinghy();
   scene.add(dinghy.object);
+  const playerMarker = boatMarker(0x3c5359, 'Y');
+  playerMarker.scale.set(7, 7, 1);
+  scene.add(playerMarker);
+  const fleet = new Map<string, { model: ReturnType<typeof createDinghy>; marker: THREE.Sprite }>();
+  let currentCourse: RenderCourse | null = null;
+  let courseScene: ReturnType<typeof createCourseScene> | null = null;
+  let quality: GraphicsQuality = 'medium';
+  let reflectionFrame = 0;
+  const reflectWater = water.onBeforeRender;
+  water.onBeforeRender = (...args) => {
+    if (quality !== 'low' || reflectionFrame++ % 2 === 0) reflectWater.apply(water, args);
+  };
+  const laylines = [-1, 1].map((side) => {
+    const line = new THREE.Line(new THREE.BufferGeometry(), new THREE.LineDashedMaterial({
+      color: side < 0 ? 0xb5c8a0 : 0xcdd8c4, dashSize: 2, gapSize: 2, transparent: true, opacity: 0.58,
+    }));
+    scene.add(line);
+    return line;
+  });
+  const courseArrow = new THREE.ArrowHelper(new THREE.Vector3(0, 0, -1), new THREE.Vector3(), 1, 0xe5d9a4, 2.5, 1.2);
+  scene.add(courseArrow);
 
   // A low distant shore gives a stable horizon without introducing a course.
   const shorePositions: number[] = [];
@@ -143,10 +166,73 @@ export function createWorld(canvas: HTMLCanvasElement) {
     camera.updateProjectionMatrix();
   }
 
-  function render(state: BoatState, telemetry: Telemetry, settings: SailingSettings, cameraMode: CameraMode, dt: number) {
+  function setQuality(next: GraphicsQuality) {
+    quality = next;
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, next === 'low' ? 1 : next === 'medium' ? 1.4 : 1.8));
+    renderer.shadowMap.enabled = next !== 'low';
+    renderer.shadowMap.needsUpdate = true;
+    resize();
+  }
+
+  function render(state: BoatState, telemetry: Telemetry, settings: SailingSettings, cameraMode: CameraMode, dt: number, extras: RenderExtras = {}) {
+    if (extras.quality && extras.quality !== quality) setQuality(extras.quality);
     const reset = state.time < lastTime;
     lastTime = state.time;
-    dinghy.update(state);
+    const spin = extras.spinnaker ?? settings.spinnaker;
+    dinghy.update(state, spin, telemetry.trueWindAngleDeg);
+    const tactical = cameraMode === 'tactical';
+    const assists = (extras.difficulty ?? 'beginner') !== 'realistic';
+    if ((extras.course ?? null) !== currentCourse) {
+      if (courseScene) disposeObject(courseScene.object);
+      currentCourse = extras.course ?? null;
+      courseScene = currentCourse ? createCourseScene(currentCourse) : null;
+      if (courseScene) scene.add(courseScene.object);
+    }
+    const opponentIds = new Set(extras.opponents?.map((opponent) => opponent.id) ?? []);
+    for (const [id, opponent] of fleet) {
+      if (!opponentIds.has(id)) { disposeObject(opponent.model.object); disposeObject(opponent.marker); fleet.delete(id); }
+    }
+    for (const opponent of extras.opponents ?? []) {
+      let entry = fleet.get(opponent.id);
+      if (!entry) {
+        const color = opponent.color ?? 0x78614b;
+        entry = { model: createDinghy({ simplified: true, color }), marker: boatMarker(color) };
+        fleet.set(opponent.id, entry);
+        scene.add(entry.model.object, entry.marker);
+      }
+      const wind = sampleWind(opponent.boat.position.x, opponent.boat.position.z, opponent.boat.time, settings);
+      const angle = Math.atan2(Math.sin(wind.direction - opponent.boat.heading), Math.cos(wind.direction - opponent.boat.heading)) * 180 / Math.PI;
+      entry.model.update(opponent.boat, spin, angle);
+      entry.marker.position.set(opponent.boat.position.x, 1, opponent.boat.position.z);
+      entry.marker.material.rotation = -opponent.boat.heading;
+      entry.marker.visible = tactical;
+    }
+    playerMarker.position.set(state.position.x, 1.5, state.position.z);
+    playerMarker.material.rotation = -state.heading;
+    playerMarker.visible = tactical;
+    const navigationTarget = extras.target;
+    laylines.forEach((line) => { line.visible = !!navigationTarget && assists; });
+    courseArrow.visible = !!navigationTarget && (extras.difficulty ?? 'beginner') === 'beginner';
+    if (navigationTarget) {
+      const dx = navigationTarget.x - state.position.x;
+      const dz = navigationTarget.z - state.position.z;
+      const wind = telemetry.trueWindDirectionDeg * Math.PI / 180;
+      const upwind = dx * Math.sin(wind) - dz * Math.cos(wind) >= 0;
+      const courseHeading = wind + (upwind ? 0 : Math.PI);
+      const guideLength = currentCourse ? currentCourse.length * 1.25 : 120;
+      laylines.forEach((line, index) => {
+        const angle = courseHeading + (index === 0 ? -1 : 1) * Math.PI / 4;
+        line.geometry.setFromPoints([new THREE.Vector3(navigationTarget.x, 0.09, navigationTarget.z),
+          new THREE.Vector3(navigationTarget.x - Math.sin(angle) * guideLength, 0.09, navigationTarget.z + Math.cos(angle) * guideLength)]);
+        line.computeLineDistances();
+      });
+      const distance = Math.hypot(dx, dz);
+      if (distance > 1) {
+        courseArrow.position.set(state.position.x, 0.15, state.position.z);
+        courseArrow.setDirection(new THREE.Vector3(dx / distance, 0, dz / distance));
+        courseArrow.setLength(distance, Math.min(3, distance * 0.15), Math.min(1.5, distance * 0.07));
+      } else courseArrow.visible = false;
+    }
     const boatPoint = new THREE.Vector3(state.position.x, 0, state.position.z);
     sunlight.position.copy(boatPoint).addScaledVector(sun, 24);
     sunlight.target.position.copy(boatPoint);
@@ -156,7 +242,7 @@ export function createWorld(canvas: HTMLCanvasElement) {
     water.material.uniforms.distortionScale.value = ENVIRONMENT_CONFIG.waveDistortionBase + settings.windSpeedKnots * ENVIRONMENT_CONFIG.waveDistortionPerKnot;
     water.material.uniforms.size.value = ENVIRONMENT_CONFIG.waveTextureScaleBase + settings.windSpeedKnots * ENVIRONMENT_CONFIG.waveTextureScalePerKnot;
 
-    if (reset || state.time - lastPuffUpdate >= 0.25 || lastPuffUpdate === -Infinity) {
+    if (reset || state.time - lastPuffUpdate >= (quality === 'low' ? 0.5 : 0.25) || lastPuffUpdate === -Infinity) {
       lastPuffUpdate = state.time;
       puffs.position.x = Math.round(state.position.x / 16) * 16;
       puffs.position.z = Math.round(state.position.z / 16) * 16;
@@ -206,7 +292,18 @@ export function createWorld(canvas: HTMLCanvasElement) {
     wake.visible = trail.length > 2;
 
     const portraitScale = camera.aspect < 1 ? 1.3 : 1;
-    if (cameraMode === 'tactical') {
+    if (tactical && currentCourse) {
+      const points = [state.position, currentCourse.startPin, currentCourse.committee, currentCourse.windward, currentCourse.gatePort, currentCourse.gateStarboard];
+      const minX = Math.min(...points.map((point) => point.x)) - 16;
+      const maxX = Math.max(...points.map((point) => point.x)) + 16;
+      const minZ = Math.min(...points.map((point) => point.z)) - 24;
+      const maxZ = Math.max(...points.map((point) => point.z)) + 24;
+      const field = Math.tan(camera.fov * Math.PI / 360) * 2;
+      const altitude = Math.max(65, (maxZ - minZ) / field, (maxX - minX) / (field * camera.aspect)) * 1.14;
+      target.set((minX + maxX) / 2, 0, (minZ + maxZ) / 2);
+      desiredPosition.set(target.x, altitude, target.z + 0.01);
+      camera.up.set(0, 0, -1);
+    } else if (tactical) {
       desiredPosition.set(state.position.x, 48 * portraitScale, state.position.z + 0.01);
       target.set(state.position.x, 0, state.position.z);
       camera.up.set(0, 0, -1);
@@ -221,6 +318,10 @@ export function createWorld(canvas: HTMLCanvasElement) {
     viewTarget.lerp(target, damping);
     camera.lookAt(viewTarget);
     previousMode = cameraMode;
+    const iconSize = tactical ? Math.max(4.5, desiredPosition.y * 0.025) : 7;
+    playerMarker.scale.set(iconSize, iconSize, 1);
+    fleet.forEach((opponent) => opponent.marker.scale.set(iconSize * 0.85, iconSize * 0.85, 1));
+    courseScene?.update(state.time, tactical, assists, Math.max(0.65, desiredPosition.y / 380));
     renderer.render(scene, camera);
   }
 
@@ -228,13 +329,16 @@ export function createWorld(canvas: HTMLCanvasElement) {
     const geometries = new Set<THREE.BufferGeometry>();
     const materials = new Set<THREE.Material>();
     scene.traverse((object) => {
-      if (object instanceof THREE.Mesh || object instanceof THREE.Line) {
+      if (object instanceof THREE.Mesh || object instanceof THREE.Line || object instanceof THREE.Sprite) {
         geometries.add(object.geometry);
         (Array.isArray(object.material) ? object.material : [object.material]).forEach((material) => materials.add(material));
       }
     });
     geometries.forEach((geometry) => geometry.dispose());
-    materials.forEach((material) => material.dispose());
+    materials.forEach((material) => {
+      if ('map' in material && material.map instanceof THREE.Texture) material.map.dispose();
+      material.dispose();
+    });
     normalTexture.dispose(); puffTexture.dispose(); dinghy.sailTexture.dispose();
     water.material.uniforms.mirrorSampler.value.dispose();
     sunlight.shadow.dispose();
@@ -243,5 +347,5 @@ export function createWorld(canvas: HTMLCanvasElement) {
   }
 
   resize();
-  return { resize, render, dispose };
+  return { resize, render, setQuality, dispose };
 }

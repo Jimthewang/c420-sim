@@ -10,7 +10,11 @@ const radians = (degrees: number) => degrees * Math.PI / 180;
 function sail(heading: number, sheet: number, seconds = 180, dt = 1 / 60, settings = steady): BoatState {
   const state = createBoatState();
   state.heading = radians(heading);
-  for (let t = 0; t < seconds - dt / 2; t += dt) stepBoat(state, { steer: 0, mainSheet: sheet }, settings, dt);
+  // A helmsman holds the requested course against the model's new heel-induced weather helm.
+  for (let t = 0; t < seconds - dt / 2; t += dt) {
+    const error = Math.atan2(Math.sin(radians(heading) - state.heading), Math.cos(radians(heading) - state.heading));
+    stepBoat(state, { steer: error * 2 - state.yawRate * 0.8, mainSheet: sheet }, settings, dt);
+  }
   return state;
 }
 
@@ -162,12 +166,12 @@ describe('force integration', () => {
     }
   });
 
-  it('keeps displacement-mode speeds bounded over the supported wind range', () => {
+  it('keeps both displacement and planing speeds plausible over the supported wind range', () => {
     for (const windSpeedKnots of [4, 10, 20]) {
       for (const heading of [30, 60, 90, 135, 180]) {
         const state = sail(heading, 0.5, 120, 1 / 60, { ...steady, windSpeedKnots });
         expect(Number.isFinite(state.position.x)).toBe(true);
-        expect(Math.hypot(state.velocity.x, state.velocity.z) / KNOTS_TO_MPS).toBeLessThan(8);
+        expect(Math.hypot(state.velocity.x, state.velocity.z) / KNOTS_TO_MPS).toBeLessThan(13);
       }
     }
   });

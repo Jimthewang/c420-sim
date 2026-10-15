@@ -25,10 +25,10 @@ pnpm build
 pnpm preview
 ```
 
-- `test` runs the automated physics checks.
+- `test` runs the automated physics, race, AI, tutorial, and scoring checks.
 - `typecheck` checks that the TypeScript code agrees about the kinds of values being passed around.
 - `build` repeats that check and creates the publishable game in `dist/`.
-- `preview` serves that publishable version locally. Open its `/c420-sim/` address and test launching, steering, trim, pause, reset, help, settings, and both cameras.
+- `preview` serves that publishable version locally. Open its `/c420-sim/` address and test setup, sailing controls, pause, reset, help, settings, both cameras, tutorials, race timing, and results.
 
 Browser play tests are still required: passing automated checks does not confirm that the game feels right or that it works on every laptop.
 
@@ -36,7 +36,7 @@ Browser play tests are still required: passing automated checks does not confirm
 
 1. In the GitHub repository, open **Settings → Pages**.
 2. Under **Build and deployment**, set **Source** to **GitHub Actions**.
-3. Review the phase's pull request and its checks. Merge it into `main` when approved.
+3. Review the game's pull request and its checks. Merge it into `main` when approved.
 4. Open the repository's **Actions** tab and wait for **Deploy GitHub Pages** to succeed.
 5. Open [the game](https://jimthewang.github.io/c420-sim/).
 
