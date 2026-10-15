@@ -14,7 +14,7 @@ import { createUI, type SetupOptions, type HudView } from './ui';
 import './style.css';
 
 const settings:SailingSettings={...DEFAULT_SETTINGS,autoCrew:true,spinnaker:false};
-const preferences={sound:true,finalBeeps:false,quality:'medium' as GraphicsQuality};
+const preferences={sound:true,finalBeeps:false,quality:'medium' as GraphicsQuality,outlines:true,daylight:14,terrainSeed:420};
 let storage:Storage|null=null;try{storage=window.localStorage;}catch{/* Private browsing can deny storage. */}
 const records=loadRecords(storage);
 const audio=createSailingAudio();
@@ -24,6 +24,8 @@ let lesson:LessonState|null=null;
 let series:SeriesEntry[]=[];
 let raceNumber=1;
 let cameraMode:CameraMode='chase';
+let resetCamera=()=>{};
+function cycleCamera(){cameraMode=cameraMode==='chase'?'diorama':cameraMode==='diorama'?'tactical':'chase';ui.setCamera(cameraMode);focusWater();}
 let started=false,paused=false,helpOpen=false,settingsOpen=false,debugOpen=false,resultsOpen=false;
 let accumulator=0,previousFrame=0,hudTimer=0,manualHike=0,lessonSaved=false;
 let stats={sailing:0,pinching:0,luffing:0,stalled:0,capsizes:0,lastCapsized:false};
@@ -67,7 +69,11 @@ const ui=createUI({
   nextRace(){if(options.mode==='series'&&raceNumber<3){raceNumber++;launch(options,true);}else launch(options);},
   nextLesson(){if(!lesson?.passed)return;if(lesson.index===5)menu();else launch({...options,lessonIndex:lesson.index+1});},
   penalty(){setPenaltyTurn(player());focusWater();},
-  camera(){cameraMode=cameraMode==='chase'?'tactical':'chase';ui.setCamera(cameraMode);focusWater();},
+  camera:cycleCamera,
+  cameraReset(){resetCamera();focusWater();},
+  outline(enabled){preferences.outlines=enabled;focusWater();},
+  regenerate(){preferences.terrainSeed=(preferences.terrainSeed+7919)%1000000;focusWater();},
+  daylight(hour){preferences.daylight=hour;},
   settings(){settingsOpen=!settingsOpen;clearInput();ui.showSettings(settingsOpen);if(!settingsOpen)focusWater();},
   help(){if(!started)return;helpOpen=!helpOpen;clearInput();accumulator=0;ui.showHelp(helpOpen);if(!helpOpen)focusWater();},
   debug(){debugOpen=!debugOpen;ui.showDebug(debugOpen);focusWater();},
@@ -101,6 +107,7 @@ window.addEventListener('keydown',event=>{
   else if(key==='n'){event.preventDefault();sequence();}
   else if(key==='p'){event.preventDefault();setPenaltyTurn(player());}
   else if(key==='c')document.getElementById('camera-button')!.click();
+  else if(key==='v'){event.preventDefault();resetCamera();}
   else if(key==='g')document.getElementById('settings-button')!.click();
   else if(key==='h')document.getElementById('help-button')!.click();
   else if(key==='f3'){event.preventDefault();debugOpen=!debugOpen;ui.showDebug(debugOpen);}
@@ -142,7 +149,7 @@ function finish(){
 }
 
 try{
-  const world=createWorld(canvas);window.addEventListener('resize',world.resize);
+  const world=createWorld(canvas);resetCamera=world.resetCamera;window.addEventListener('resize',world.resize);
   canvas.addEventListener('webglcontextlost',event=>{event.preventDefault();paused=true;audio.setPaused(true);ui.showError('The graphics connection was lost. Close a few other tabs, then try again.');});
   function frame(timestamp:number){
     const dt=previousFrame===0?0:Math.min((timestamp-previousFrame)/1000,E.maxFrameDelta);previousFrame=timestamp;
@@ -175,7 +182,7 @@ try{
     const state=player().state;const shadowSettings={...settings,windShadows:race.racers.slice(1).map(r=>({position:r.state.position,heading:r.state.heading}))};
     const telemetry=getTelemetry(state,shadowSettings);state.main=telemetry.main;state.jib=telemetry.jib;
     const view=getRaceView(race);const showCourse=started&&options.mode!=='free'&&(!lesson||lesson.index>=4);
-    world.render(state,telemetry,settings,cameraMode,running||!started?dt:0,{opponents:race.racers.slice(1).map(r=>({id:r.id,name:r.name,boat:r.state,color:r.color})),course:showCourse?race.course:null,target:showCourse?view.nextTarget:null,difficulty:options.difficulty,quality:preferences.quality,spinnaker:settings.spinnaker});
+    world.render(state,telemetry,settings,cameraMode,running||!started?dt:0,{opponents:race.racers.slice(1).map(r=>({id:r.id,name:r.name,boat:r.state,color:r.color})),course:showCourse?race.course:null,target:showCourse?view.nextTarget:null,difficulty:options.difficulty,quality:preferences.quality,spinnaker:settings.spinnaker,outlines:preferences.outlines,daylight:preferences.daylight,terrainSeed:preferences.terrainSeed});
     audio.setPaused(!running);audio.update(state,telemetry,running?dt:0);
     hudTimer+=dt;
     if(hudTimer>=.1||!running){

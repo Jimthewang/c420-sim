@@ -132,7 +132,8 @@ describe('ordered roundings and finish', () => {
     expect(race.racers[0].stage).toBe('finish');
     move(race, 35, 4); move(race, 35, -4);
     expect(race.racers[0].finishedAt).toBeNull();
-    move(race, 0, 4); move(race, 0, -4);
+    // Route below the committee hull before returning to the middle of the line.
+    move(race, 35, -14); move(race, 0, -14); move(race, 0, 4); move(race, 0, -4);
     expect(race.racers[0].finishedAt).not.toBeNull(); expect(race.phase).toBe('finished');
   });
   it('requires a gate-mark rounding before the second beat', () => {
@@ -196,7 +197,10 @@ describe('simplified right of way and sailed penalties', () => {
     const [front, following] = race.racers;
     front.state.heading = following.state.heading = Math.PI / 4;
     front.state.position = { x: 0, z: 0 };
-    following.state.position = { x: -5 / Math.SQRT2, z: 5 / Math.SQRT2 }; stepRace(race, race.racers, 0.1);
+    following.state.position = { x: -5 / Math.SQRT2, z: 5 / Math.SQRT2 };
+    // This test places an encounter; do not sweep the setup move from the launch positions through it.
+    for (const racer of race.racers) { racer.previousPosition = { ...racer.state.position }; racer.previousHeading = racer.state.heading; }
+    stepRace(race, race.racers, 0.1);
     following.state.position = { x: 1 / Math.SQRT2, z: 3 / Math.SQRT2 }; stepRace(race, race.racers, 0.1);
     expect(front.penalties).toBe(1); expect(following.penalties).toBe(0);
   });
@@ -255,4 +259,73 @@ describe('complete AI racing through real sailing physics', () => {
     expect(race.racers.every(r => r.roundings === laps * 2)).toBe(true);
     expect(getRaceView(race).standings.map(r => r.place)).toEqual(race.racers.map((_, index) => index + 1));
   }, 20_000);
+});
+
+describe('solid contacts after sailing integration', () => {
+  it('has the AI steer clear of the physical committee boat on its starting approach', () => {
+    const race=racing(),racer=race.racers[0];
+    racer.started=true;racer.stage='windward';racer.state.position={x:race.course.committee.x-8,z:8};racer.state.heading=Math.PI/4;
+    racer.state.velocity={x:1.5,z:-1.5};
+    const near=aiControls(racer,race,settings,0).steer;
+    const clear=aiControls(racer,{...race,course:{...race.course,committee:{x:500,z:500}}},settings,0).steer;
+    expect(Math.abs(near-clear)).toBeGreaterThan(.1);
+  });
+  it('lets the AI recover a backed-down boat through real rudder flow and finish the race', () => {
+    const race=racing(),racer=race.racers[0];
+    racer.state.position={x:0,z:25};racer.state.heading=-28*Math.PI/180;racer.state.velocity={x:.06,z:.29};
+    racer.previousPosition={...racer.state.position};racer.previousHeading=racer.state.heading;
+    for(let t=0;t<900 && race.phase!=='finished';t+=1/30){
+      stepBoat(racer.state,aiControls(racer,race,settings,1/30),settings,1/30);
+      stepRace(race,race.racers,1/30);
+    }
+    expect(racer.finishedAt).not.toBeNull();
+    expect(racer.roundings).toBe(2);
+  });
+  it('separates overlapping boats symmetrically before the start without penalties', () => {
+    const race = createRace({ ...options, aiCount: 1 }, settings);
+    const [a, b] = race.racers;
+    a.state.position = { x: -0.1, z: 40 }; b.state.position = { x: 0.1, z: 40 };
+    a.state.heading = b.state.heading = 0;
+    a.previousPosition = { ...a.state.position }; b.previousPosition = { ...b.state.position };
+    a.previousHeading = a.state.heading; b.previousHeading = b.state.heading;
+    a.state.velocity = { x: 2, z: 1 }; b.state.velocity = { x: -2, z: 1 };
+    stepRace(race, race.racers, 1 / 120);
+    expect(b.state.position.x - a.state.position.x).toBeGreaterThanOrEqual(1.63);
+    expect(a.state.position.x + b.state.position.x).toBeCloseTo(0);
+    expect(a.state.velocity.x).toBeLessThanOrEqual(0);
+    expect(b.state.velocity.x).toBeGreaterThanOrEqual(0);
+    expect(a.penalties + b.penalties).toBe(0);
+  });
+
+  it('keeps a boat out of the windward buoy and penalizes one sustained racing contact once', () => {
+    const race = racing(); const racer = race.racers[0];
+    racer.state.position = { ...race.course.windward }; racer.state.heading = 0;
+    racer.previousPosition = { ...racer.state.position };
+    stepRace(race, race.racers, 1 / 120);
+    expect(Math.hypot(racer.state.position.x - race.course.windward.x, racer.state.position.z - race.course.windward.z)).toBeGreaterThan(1.5);
+    expect(racer.penalties).toBe(1);
+    for (let i = 0; i < 100; i++) stepRace(race, race.racers, 1 / 120);
+    expect(racer.penalties).toBe(1);
+  });
+
+  it('collides with the committee hull during prestart', () => {
+    const race = createRace(options, settings), racer = race.racers[0];
+    racer.state.position = { ...race.course.committee }; racer.state.heading = 0;
+    racer.previousPosition = { ...racer.state.position };
+    stepRace(race, race.racers, 1 / 120);
+    expect(Math.hypot(racer.state.position.x - race.course.committee.x, racer.state.position.z - race.course.committee.z)).toBeGreaterThan(1.8);
+    expect(racer.penalties).toBe(0);
+  });
+
+  it('stops a fast boat crossing through a buoy between sampled positions', () => {
+    const race = createRace(options, settings), racer = race.racers[0];
+    racer.state.heading = Math.PI / 2;
+    racer.previousHeading = racer.state.heading;
+    racer.previousPosition = { x: race.course.windward.x - 12, z: race.course.windward.z };
+    racer.state.position = { x: race.course.windward.x + 12, z: race.course.windward.z };
+    racer.state.velocity = { x: 30, z: 0 };
+    stepRace(race, race.racers, 0.8);
+    expect(racer.state.position.x).toBeLessThan(race.course.windward.x - 2);
+    expect(racer.state.velocity.x).toBeLessThanOrEqual(0);
+  });
 });

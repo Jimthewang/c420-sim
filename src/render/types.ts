@@ -20,4 +20,7 @@ export interface RenderExtras {
   difficulty?: 'beginner' | 'intermediate' | 'realistic';
   quality?: GraphicsQuality;
   spinnaker?: boolean;
+  outlines?: boolean;
+  daylight?: number;
+  terrainSeed?: number;
 }

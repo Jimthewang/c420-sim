@@ -28,7 +28,7 @@ pnpm preview
 - `test` runs the automated physics, race, AI, tutorial, and scoring checks.
 - `typecheck` checks that the TypeScript code agrees about the kinds of values being passed around.
 - `build` repeats that check and creates the publishable game in `dist/`.
-- `preview` serves that publishable version locally. Open its `/c420-sim/` address and test setup, sailing controls, pause, reset, help, settings, both cameras, tutorials, race timing, and results.
+- `preview` serves that publishable version locally. Open its `/c420-sim/` address and test setup, sailing controls, pause, reset, help, settings, all three cameras, free drag/pan/zoom, outlines, island regeneration and daylight, tutorials, race timing, and results.
 
 Browser play tests are still required: passing automated checks does not confirm that the game feels right or that it works on every laptop.
 

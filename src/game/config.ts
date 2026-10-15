@@ -18,5 +18,20 @@ export const RACE_CONFIG = {
   aiUpwindAngleDeg: 51, // Opponents sail comfortably outside the no-go zone.
   aiHeadingGain: 1.5, // Helm response to the difference between actual and desired heading.
   aiYawDamping: 1.1, // Centre the tiller as a turn approaches its target heading.
-  aiAvoidDistance: 13, // Opponents start avoiding nearby boats before hull contact.
+  aiAvoidDistance: 24, // Opponents start avoiding nearby boats before hull contact.
+  aiAvoidLookaheadSeconds: 6, // Look ahead far enough to avoid a boat tacking into the current track.
+  aiAvoidPassingDistanceM: 6, // Predicted hull centres should leave room for both boat lengths.
+  aiEmergencyAvoidSeconds: 2, // Even a stand-on boat bears away when a collision is imminent.
+  aiAvoidBearAwayDeg: 35, // Decisive give-way heading that stays powered outside the no-go zone.
+  aiLoiterLaneSpacingM: 12, // Separate prestart reaching lanes leave room for downwind turns.
+  aiStartEndClearanceM: 4, // Approach the starting segment inboard of its physical endpoints.
+  aiStartApproachDepthM: 20, // Return this far below the line before crossing from outside an endpoint.
+  aiPenaltyClearanceM: 24, // Sail clear of fixed objects before beginning or continuing a penalty circle.
+  aiPenaltyEntrySpeedMps: 0.6, // Build rudder flow before attempting the upwind part of a penalty circle.
+  aiObstacleClearanceM: 2, // Extra navigation room beyond hull and course-object collision radii.
+  aiBackingThresholdMps: 0.05, // Reverse tiller action when actual water flow through the rudder is astern.
+  aiRecoveryTrimAngleDeg: 38, // First ease completely, then trim once backed onto this angle on the new tack.
+  aiRecoveryExitAngleDeg: 48, // Resume navigation only once the recovered boat is outside the no-go zone.
+  aiRecoveryNoGoDeg: 40, // A backed-down hull inside this wind angle needs a deliberate escape tack.
+  aiRecoverySpeedMps: 0.4, // Resume normal navigation only after the recovery has restored forward rudder flow.
 };

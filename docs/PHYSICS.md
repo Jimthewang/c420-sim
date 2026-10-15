@@ -29,7 +29,7 @@ Integration uses small semi-implicit steps: first velocity changes from force, t
 
 ## Deliberate approximations
 
-- Roll, crew movement, capsize recovery and planing are reduced physical models. They are not a full six-degree-of-freedom hull solver. Waves are visual rather than individual impacts on the hull.
+- Roll, crew movement, capsize recovery and planing are reduced physical models. They are not a full six-degree-of-freedom hull solver. A shared four-point wave surface sets rendered heave, pitch and extra roll and is included in grounding clearance; it does not apply individual wave-impact forces to the sailing integrator.
 - The main and jib are two lumped airfoils. Effective spanwise twist and the coefficient curves are tunable approximations, not measured C420 sail-section data. There is no sail cloth solver or explicit jib-main slot interaction. Debug sail angle of attack is this effective airflow angle, rather than simply the boom angle subtracted from apparent wind.
 - The upright rig is assumed balanced in yaw: neutral-rudder leeway forces are offset by the rig/board balance. Turning moment combines local rudder flow, hull damping and an empirical heel-dependent weather-helm lever. Detailed changing centers of pressure are not resolved.
 - Raising the centerboard reduces its effective area continuously. Foil lift uses a bounded sinusoidal coefficient and a simple induced-drag curve. The model does not calculate ventilation or free-surface effects.
@@ -37,9 +37,21 @@ Integration uses small semi-implicit steps: first velocity changes from force, t
 - Roll-tack propulsion is a bounded crew-work approximation, capped by `crew mass × gravity × body-height change × efficiency`, delivered only in a brief tack-exit window and with a minimum interval between useful rolls. It is not unlimited speed from pressing a key. Gybing impulse represents boom and sheet load rather than a cloth-and-rig impact solver.
 - Capsize recovery models the required control sequence and continuous righting effort. It does not simulate swimming, turtling, ropes or sailors separately climbing onto the board.
 - The optional spinnaker uses a pressure-drag approximation. It does not yet resolve spinnaker-specific lift on a tight reach. Wind shadows use an empirical widening downwind plume, not computational fluid dynamics.
-- Wind gust bands move along the selected mean wind direction while the wind direction oscillates. Waves are visual; their appearance responds to wind speed.
+- Wind gust bands move along the selected mean wind direction while the wind direction oscillates. Local wind, including wind shadows, controls wave amplitude. Wave phase follows wavelength-based dispersion so a changing gust cannot cause a discontinuous phase jump.
 - The no-go region is gradual. Around 30° the boat stalls or drifts backward; at 35° it can creep upwind inefficiently. The strongest measured close-hauled performance is around 45°. There is no artificial 40° cutoff.
 - On a run, the sail status may correctly report separated/stalled airflow even when pressure drag is providing useful propulsion; easing improves the available projected area. Trim hints and result tips avoid calling this normal downwind pressure flow an overtrimmed reaching sail.
+
+## Terrain, waves and solid contacts
+
+The NPR overhaul leaves `getTelemetry` and the existing sail, foil, hull, crew, roll and capsize force calculations unchanged. Collision corrections run after each 1/120-second force substep and after the fleet advances together.
+
+- `src/world/terrain.ts` is the shared seeded four-octave height field. Warped island footprints create bays and reefs; the current course and occupied reset locations reserve deep water. Rendered terrain samples this field before splitting triangles for flat normals.
+- Grounding probes the hull envelope, lowered centerboard and rudder with the same four-point wave pose used by the boat renderer. Sweeps include translation and turning. A terrain-gradient correction pushes the hull toward deeper water, removes inward velocity and applies tangential friction. A conservative mesh-clearance allowance covers interpolation between terrain vertices.
+- Boat/boat and committee contacts use oriented boxes and separating-axis minimum translations. Marks use 0.75 m circles. Swept intermediate poses prevent a fast boat from jumping through a narrow obstacle. Contact impulses exchange linear and angular momentum with low restitution and friction; repeated terrain/solid projection resolves combined contacts.
+- Right-of-way is judged from the encounter before separation. Actual mark and committee contacts produce the existing sailed-turn penalty during a race. Repeated resting contact does not accumulate a penalty every frame.
+- AI uses the same helm, sheet and board inputs as the player. When backed into the no-go zone, it eases fully to back across the wind, then sheets in on the new tack and reverses the tiller as forward flow returns. No AI-only thrust or position teleport is used.
+
+The collision envelopes are deliberately conservative rather than exact curved hull meshes. This avoids visible penetration at the cost of a small gap around curved bows. These are rigid contact and shallow-water models, not structural damage, six-axis buoyancy or fluid simulation.
 
 ## Calibration check
 

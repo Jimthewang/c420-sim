@@ -1,8 +1,12 @@
 import * as THREE from 'three';
 import type { Vec2 } from '../physics/types';
 import type { RenderCourse } from './types';
+import { ENVIRONMENT_CONFIG as E } from '../config/environment';
+import { ovalLoft } from './geometry';
+import { attachOutline, disposeOutlines, toonMaterial } from './toon';
 
 export function disposeObject(object: THREE.Object3D) {
+  disposeOutlines(object);
   const geometries = new Set<THREE.BufferGeometry>();
   const materials = new Set<THREE.Material>();
   object.traverse((child) => {
@@ -55,43 +59,68 @@ export function createCourseScene(course: RenderCourse) {
   const object = new THREE.Group();
   const labels: THREE.Sprite[] = [];
   const marks: THREE.Group[] = [];
-  const orange = new THREE.MeshStandardMaterial({ color: 0xe57d31, roughness: 0.8 });
-  const charcoal = new THREE.MeshStandardMaterial({ color: 0x36454b, roughness: 0.85 });
-  function mark(position: Vec2, name: string, small = false) {
+  const coral = toonMaterial(0xff6b6b);
+  const lemon = toonMaterial(0xffe144);
+  const charcoal = toonMaterial(0x263649);
+  const white = toonMaterial(0xfffdf7);
+  const glass = toonMaterial(0x7bcad2);
+  function mesh(geometry: THREE.BufferGeometry, material: THREE.Material, parent: THREE.Group, outline = 0.018) {
+    const part = new THREE.Mesh(geometry, material);
+    part.castShadow = true; part.receiveShadow = true;
+    parent.add(part); attachOutline(part, outline); return part;
+  }
+  function mark(position: Vec2, name: string) {
     const group = new THREE.Group();
-    const size = small ? 0.8 : 1;
-    const body = new THREE.Mesh(new THREE.CylinderGeometry(0.46 * size, 0.66 * size, 1.35 * size, 12), orange);
-    body.position.y = 0.58 * size;
-    const band = new THREE.Mesh(new THREE.CylinderGeometry(0.53 * size, 0.55 * size, 0.12, 12), charcoal);
-    band.position.y = 0.72 * size;
-    group.add(body, band);
+    const r = E.markRadiusM - 0.022;
+    const profile = [[0, -0.05], [r * 0.75, -0.04], [r * 0.96, 0.12], [r, 0.4], [r * 0.93, 0.91], [r * 0.74, 1.18], [r * 0.4, 1.27], [0, 1.29]];
+    mesh(new THREE.LatheGeometry(profile.map(([x, y]) => new THREE.Vector2(x, y)), 28), coral, group);
+    const band = mesh(new THREE.TorusGeometry(r * 0.95, 0.026, 6, 28), lemon, group, 0.008);
+    band.rotation.x = Math.PI / 2; band.position.y = 0.78;
+    const base = mesh(new THREE.TorusGeometry(r * 0.87, 0.035, 6, 28), charcoal, group, 0.008);
+    base.rotation.x = Math.PI / 2; base.position.y = 0.09;
     group.position.set(position.x, 0, position.z);
     object.add(group); marks.push(group);
     const label = labelSprite(name);
     label.position.set(position.x, 4, position.z - 5);
     object.add(label); labels.push(label);
   }
-  mark(course.startPin, 'Pin / finish', true);
+  mark(course.startPin, 'Pin / finish');
   mark(course.windward, 'Windward');
   mark(course.gatePort, 'Gate');
   mark(course.gateStarboard, 'Gate');
   const committee = new THREE.Group();
-  const white = new THREE.MeshStandardMaterial({ color: 0xecece0, roughness: 0.65 });
-  const glass = new THREE.MeshStandardMaterial({ color: 0x426b7c, metalness: 0.2, roughness: 0.28 });
-  const hull = new THREE.Mesh(new THREE.BoxGeometry(2, 0.65, 4.4), white);
-  hull.position.y = 0.38;
-  const cabin = new THREE.Mesh(new THREE.BoxGeometry(1.4, 1.1, 1.8), white);
-  cabin.position.set(0, 1.1, 0.25);
-  const windows = new THREE.Mesh(new THREE.BoxGeometry(1.42, 0.5, 1.82), glass);
-  windows.position.set(0, 1.26, 0.25);
-  const roof = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.13, 2.1), white);
-  roof.position.set(0, 1.73, 0.25);
-  const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 3.8, 6), charcoal);
-  mast.position.set(-0.72, 2.1, -0.7);
-  const flag = new THREE.Mesh(new THREE.PlaneGeometry(0.75, 0.45), orange);
-  flag.position.set(-0.35, 3.6, -0.7);
-  flag.material.side = THREE.DoubleSide;
-  committee.add(hull, cabin, windows, roof, mast, flag);
+  const halfLength = E.committeeLengthM / 2, halfBeam = E.committeeBeamM / 2;
+  // The same 4.4 by 2 metre footprint is used by collision detection.
+  mesh(ovalLoft([
+    { z: -halfLength + 0.03, y: 0.45, width: 0.015, height: 0.10 },
+    { z: -halfLength * 0.65, y: 0.28, width: halfBeam * 0.68, height: 0.32 },
+    { z: -halfLength * 0.2, y: 0.26, width: halfBeam * 0.96, height: 0.34 },
+    { z: halfLength * 0.5, y: 0.26, width: halfBeam * 0.95, height: 0.34 },
+    { z: halfLength - 0.04, y: 0.30, width: halfBeam * 0.78, height: 0.27 },
+  ], 36, 20), white, committee, 0.022);
+  for (const side of [-1, 1]) {
+    const stripe = new THREE.CatmullRomCurve3([
+      new THREE.Vector3(0, 0.54, -halfLength + 0.035),
+      new THREE.Vector3(side * halfBeam * 0.7, 0.48, -halfLength * 0.62),
+      new THREE.Vector3(side * halfBeam * 0.94, 0.45, -halfLength * 0.2),
+      new THREE.Vector3(side * halfBeam * 0.92, 0.45, halfLength * 0.5),
+      new THREE.Vector3(side * halfBeam * 0.77, 0.48, halfLength - 0.06),
+    ]);
+    mesh(new THREE.TubeGeometry(stripe, 32, 0.022, 6), coral, committee, 0.008);
+  }
+  const cabin = mesh(new THREE.SphereGeometry(1, 24, 16), white, committee);
+  cabin.scale.set(0.69, 0.62, 1.02); cabin.position.set(0, 0.95, 0.22);
+  const windows = mesh(new THREE.SphereGeometry(1, 24, 8, 0, Math.PI * 2, 0.68, 0.56), glass, committee, 0.01);
+  windows.scale.set(0.699, 0.63, 1.03); windows.position.copy(cabin.position);
+  const roof = mesh(new THREE.SphereGeometry(1, 20, 8), lemon, committee, 0.014);
+  roof.scale.set(0.59, 0.07, 0.9); roof.position.set(0, 1.57, 0.22);
+  const mast = mesh(new THREE.CylinderGeometry(0.025, 0.03, 3.2, 10), charcoal, committee, 0.008);
+  mast.position.set(-0.70, 1.97, -0.7);
+  const flagShape = new THREE.Shape();
+  flagShape.moveTo(0, 0); flagShape.quadraticCurveTo(0.37, 0.12, 0.75, 0.02);
+  flagShape.lineTo(0.72, -0.4); flagShape.quadraticCurveTo(0.37, -0.28, 0, -0.42); flagShape.closePath();
+  const flag = mesh(new THREE.ShapeGeometry(flagShape, 12), toonMaterial(0xff6b6b, { side: THREE.DoubleSide }), committee, 0.004);
+  flag.position.set(-0.70, 3.48, -0.7);
   committee.position.set(course.committee.x, 0, course.committee.z);
   committee.rotation.y = -course.windDirectionDeg * Math.PI / 180;
   object.add(committee);

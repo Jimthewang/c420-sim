@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest';
+import { configureTerrainCourse } from '../world/terrain';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { createBoatState, getTelemetry, sampleWind, stepBoat } from './sailing';
 import { DEFAULT_SETTINGS, KNOTS_TO_MPS } from '../config/environment';
 import { BOAT_CONFIG as B } from '../config/boat';
@@ -8,6 +9,8 @@ const steady: SailingSettings = { ...DEFAULT_SETTINGS, shifts: false, gusts: fal
 const radians = (degrees: number) => degrees * Math.PI / 180;
 
 function sail(heading: number, sheet: number, seconds = 180, dt = 1 / 60, settings = steady): BoatState {
+  // Reserve an empty test-tank corridor for long straight-line force calibration at every heading.
+  configureTerrainCourse({windDirectionDeg:heading,length:2000});
   const state = createBoatState();
   state.heading = radians(heading);
   // A helmsman holds the requested course against the model's new heel-induced weather helm.
@@ -17,6 +20,9 @@ function sail(heading: number, sheet: number, seconds = 180, dt = 1 / 60, settin
   }
   return state;
 }
+
+// Force calibration runs in clear course water; coast response has its own geometry tests.
+beforeEach(()=>configureTerrainCourse({windDirectionDeg:0,length:350}));
 
 describe('wind and apparent wind', () => {
   it('uses a meteorological wind-from direction and SI velocity', () => {

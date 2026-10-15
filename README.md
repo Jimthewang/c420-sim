@@ -12,7 +12,7 @@ A playable 3D Club 420 sailing game with a two-person crew, fleet racing, a thre
 2. Hold **A/D** to steer. Hold **W** to pull the mainsail in and **S** to ease it out. The **mainsheet** is the rope controlling the mainsail's angle.
 3. Keep the wind coming from the side, a **reach**, and build at least 2.5 knots of speed for five seconds. A **knot** is one nautical mile per hour.
 4. The lesson passes only after you steer, adjust the main, and meet its sailing goal. Click **Next lesson** to continue.
-5. Use **H** for controls, **Esc** to pause, and **C** for the overhead view. Tutorial completion is saved in this browser.
+5. Use **H** for controls, **Esc** to pause, and **C** to cycle orbit, diorama, and tactical views. Tutorial completion is saved in this browser.
 
 The six lessons cover reaching, the no-go zone, tacking, gybing, rounding a mark, and starting. The **no-go zone** is the angle too close to the wind for useful forward sailing. A **tack** turns the bow through the wind; a **gybe** changes sides with the wind passing across the stern. Steer through each maneuver yourself.
 
@@ -51,7 +51,11 @@ The six lessons cover reaching, the no-go zone, tacking, gybing, rounding a mark
 | F, held | Right a capsize with main eased and board down |
 | P | Arm a penalty, then sail a full turn |
 | N | Begin a three-minute starting sequence |
-| C | Chase / overhead camera |
+| Left drag | Orbit freely; drag vertically to tilt |
+| Right / middle drag or Shift + left drag | Pan the focus across the water |
+| Scroll / trackpad scroll | Smooth zoom from 4 to 180 metres |
+| V or double-click the water | Smoothly recenter on your boat |
+| C | Orbit follow → isometric diorama → tactical overview |
 | G | Wind, boat, sound, and graphics settings |
 | F3 | Physics readout (Fn+F3 may be needed on a Mac) |
 | H | Controls help |
@@ -61,6 +65,14 @@ The six lessons cover reaching, the no-go zone, tacking, gybing, rounding a mark
 The crew trims the jib and balances weight automatically by default. Turn off **Automatic crew** under **G** to use J/L and Q/E. **Hiking** means moving body weight outward to balance the sail force. Crew weight and position affect heel, drag, and roll-tack performance.
 
 **Heel** is the boat leaning sideways. If you capsize in intermediate or realistic mode, hold **S** until the main is fully eased, hold **X** until the board is fully down, then hold **F** for the recovery progress to finish. Beginner supplies those same actions automatically. **Planing** means the hull lifts and skims over the water at higher speed.
+
+## Islands, views, and appearance
+
+The curved boats sail among three-dimensional islands with yellow beaches, green meadows, turquoise cliffs, trees, and a lighthouse. Polygonal waves lift and tilt the boat; white foam follows shorelines, bow splashes, wakes, and roll tacks. The camera stays above water and ground. You can drag outside the pause card while paused to inspect the scene.
+
+Use **Ink on/off** at the top left to toggle black model outlines, **New islands** to generate another terrain seed, and **Sun** to choose a fixed hour of day or night. These controls work during a session. The course and current fleet positions remain deep water when islands regenerate.
+
+Land, other hulls, buoys, and the committee boat are solid. A shallow approach slows and slides the boat along shore; lowering the centerboard requires more clearance. Hitting a mark or another boat during a race can require the existing sailed penalty turn. Crew automatically crouch before a crossing boom and stay within the molded cockpit and rail.
 
 ## Settings and sound
 
@@ -80,10 +92,10 @@ Sound begins after an interaction. Wind, hull wash, planing hiss, sail flutter, 
 
 The editable numbers are in [src/config/boat.ts](src/config/boat.ts) and [src/config/environment.ts](src/config/environment.ts), with sailing explanations and units. Race geometry and AI steering choices are in [src/game/config.ts](src/game/config.ts). Change one setting at a time, sail comparable conditions, and inspect F3. Ask Codex to adjust these if you prefer not to edit files.
 
-The model is calibrated to approximately 4.34 knots upwind in steady 10-knot wind, and 10.01 knots on a beam reach in 15-knot wind. These are repeatable simulated targets, not measured C420 certification. Planing, roll tacks, spinnaker, crew motion, and disturbed air use documented approximations. Waves are visual; race-rule decisions are simplified. See [physics notes](docs/PHYSICS.md) for assumptions, sources, and calibration.
+The model is calibrated to approximately 4.34 knots upwind in steady 10-knot wind, and 10.01 knots on a beam reach in 15-knot wind. These are repeatable simulated targets, not measured C420 certification. Planing, roll tacks, spinnaker, crew motion, and disturbed air use documented approximations. Waves drive visible buoyancy and clearance, while the original sailing forces remain a reduced horizontal/heel model; race-rule decisions are simplified. See [physics notes](docs/PHYSICS.md) for assumptions, sources, and calibration.
 
 ## Development and publishing
 
-[Setup notes](docs/SETUP.md) explain local installation, tests, and GitHub Pages. The project uses pinned TypeScript, Vite, Three.js, lil-gui, and Vitest versions, with no general-purpose physics engine. Three.js's official Water and Sky examples provide the ocean foundation. All audio is generated with Web Audio; there are no external asset or audio services at runtime.
+[Setup notes](docs/SETUP.md) explain local installation, tests, and GitHub Pages. The project uses pinned TypeScript, Vite, Three.js, lil-gui, and Vitest versions, with no general-purpose physics engine. A custom three-band toon pipeline renders the seeded terrain, dynamic wave mesh, outlined models, and daylight. All audio is generated with Web Audio; there are no external asset or audio services at runtime.
 
 Read [PROGRESS.md](PROGRESS.md) for verification and remaining acceptance/publication steps, and [SPEC.md](SPEC.md) for the unchanged original request. The later instruction to complete all phases together supersedes its intermediate stopping points. Optional phone controls and the alternative digital-N course remain outside this delivery.

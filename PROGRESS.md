@@ -1,12 +1,12 @@
 # C420 simulator progress
 
-## All seven phases implemented — final review and public deployment pending
+## All seven phases plus the NPR, camera and collision overhaul implemented
 
 The game now supports a complete sailing session: menu, setup, pre-start sailing, three-minute sequence, fleet race, finish, results, and another race or return to the menu. The later request to complete every phase together replaces the original intermediate stopping points. The original SPEC.md remains unchanged.
 
 | Phase | What is built |
 | --- | --- |
-| 1 | Pinned project setup, custom wind/sail/hull/foil forces, ocean, C420, keyboard helm/trim, two cameras, settings, debug readout, tests, and Pages workflows. |
+| 1 | Pinned project setup, custom wind/sail/hull/foil forces, ocean, C420, keyboard helm/trim, three cameras, settings, debug readout, tests, and Pages workflows. |
 | 2 | Heel, weather helm, capsize and recovery, adjustable centerboard, planing, tack speed loss, gybe response, and calibrated speeds. |
 | 3 | Two moving sailors whose weight changes righting force and drag; automatic and manual jib/hiking controls, plus bounded roll-tack assistance. |
 | 4 | Windward mark, leeward gate, start/finish line, 180-second sequence, OCS return, correct-side rounding, race results, restart, free sail, start practice, and time trial. |
@@ -14,7 +14,27 @@ The game now supports a complete sailing session: menu, setup, pre-start sailing
 | 6 | Up to seven selectable AI opponents using the same boat physics, wind shadows, boat avoidance, OCS/capsize recovery, simplified right-of-way, and sailed penalty turns. |
 | 7 | Three assistance levels, six interactive lessons, three-race low-point scoring, browser-saved records and lesson progress, graphics settings, and fleet rendering optimizations. |
 
-## Verification completed
+## NPR, free camera and collision overhaul
+
+- All solid models now use a three-step toon ramp, welded inverted-hull outlines, a cream/lemon/coral palette and a 2048 PCF sunlight shadow map. Curved hull, tanks, seats, foils, committee boat and buoys replace boxes. Day/night lighting, outline visibility and island seed controls are available in the HUD.
+- Seeded four-octave terrain creates irregular islands, bays, reefs, trees and a lighthouse while keeping the race corridor deep. Flat triangulated water, boats, shoreline/spray foam and camera clearance share a continuous gust-responsive wave sampler.
+- Orbit, diorama and tactical modes support drag rotation, right/middle/Shift-drag pan, 4–180 m scroll zoom and smooth double-click/V recentering. Camera navigation continues while the simulation is paused, with clearance above both land and water.
+- Every HUD, setup panel and result dialog uses solid cream/bright blocks, 3 px black borders and hard offset shadows. Narrow-screen layout preserves the sailing controls.
+- Swept terrain/appendage grounding and oriented-box/circle contacts separate boats, marks and the committee boat with friction and linear/angular impulses. Existing race adjudication runs before physical separation. Sailors duck during boom sweeps, with actual body/outline geometry checked against internal solids.
+- `getTelemetry` and the original aerodynamic/hydrodynamic integrator are retained. AI navigates the new solid obstacles and recovers from backing using real helm/sheet inputs.
+
+## Current overhaul verification
+
+- **130 tests across 13 files passed** in the final local run. TypeScript and production build passed; the existing bundle-size advisory remains.
+- All five full-physics fleet regressions still finish every boat with no outstanding penalty: light/standard/heavy wind, 120/220/350 m courses, one/two laps, and nine boats in rotated gusting wind. A backed-down boat also recovers through real controls and completes its course.
+- Collision tests cover swept high-speed crossings, linear/angular momentum and energy, hull/foil clearance against actual triangulated terrain, both capsize directions, and an eight-boat queue pressed into shore. The independent reviewer reran the original failing capsize and queue probes successfully after the fixes.
+- Full sailor meshes, limb instances and outline shells are checked against internal solids in 378 normal-suite configurations; a separate independent dense sweep passed 1,638 poses. These are sampled geometry checks, not a claim of a formal proof for every possible pose.
+- The final production renderer was exercised in the in-app Chromium browser and Safari. Checks include actual sailing, orbit/three-mode navigation, zoom/recenter, pause camera operation, outline toggling, seed regeneration, day/night, race countdown, and narrow-screen lesson layout. Current-build console inspection found no errors or warnings in the tested flow.
+- The original `sailForce`, `foilForce`, `forces`, `sampleWind`, crew/maneuver calculations and `getTelemetry` remain byte-for-byte unchanged. Existing OCS, rounding, wind-shadow, penalty, tutorial and record assertions pass. Only physically invalid test setup paths were corrected to avoid teleporting through newly solid objects; straight-line speed tests now reserve an empty calibration corridor.
+
+## Earlier seven-phase verification
+
+The following checks were completed for the version preceding the visual/collision overhaul; current regression results are reported above.
 
 - **74 automated tests passed:** 34 physics tests, 31 race/AI tests, and 9 tutorial/record/scoring tests. TypeScript checks and the production build passed.
 - Five automated full-physics races finished every boat without an outstanding penalty or DNF: 4/10/18-knot wind, 120/220/350-metre courses, one/two laps, and a nine-boat stress scenario with shifts, puffs, and rotated wind. The normal game allows at most eight boats including the player.
@@ -41,8 +61,8 @@ These are model calibration results, not measured C420 validation. Detailed assu
 
 ## Limits that remain deliberate
 
-- Sailing coefficients, planing, roll-tack work, crew movement, spinnaker, and wind shadows are simplified and editable. Waves are visual, and there is no full fluid or sail-cloth simulation.
-- Right-of-way and contact rules are a training approximation. Mark-room, protests, full overlap exceptions, and collision impact forces are not implemented. A single sailed 360° turn is the game's simplified penalty.
+- Sailing coefficients, planing, roll-tack work, crew movement, spinnaker, and wind shadows are simplified and editable. Waves drive rigid visual heave/pitch/roll and grounding clearance; there is no full fluid, six-axis wave-impact or sail-cloth simulation.
+- Right-of-way and contact rules are a training approximation. Full mark-room, formal protests and all overlap exceptions are not implemented. Solid collision impacts are implemented with conservative hull envelopes. A single sailed 360° turn is the game's simplified penalty.
 - The optional digital-N course and phone touch controls are outside the seven requested phases.
 - The game was checked on this Mac, not benchmarked across a range of average laptops. A low graphics setting is included; rendering still needs user feedback on other hardware.
 - LocalStorage saves belong to the current browser and address. The local and future public game have separate records. Clearing browser data removes those records. An unfinished series is session-only.

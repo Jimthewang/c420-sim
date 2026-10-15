@@ -1,8 +1,10 @@
 import { createBoatState, sampleWind } from '../physics/sailing';
-import { DEG_TO_RAD } from '../config/environment';
+import { DEG_TO_RAD, ENVIRONMENT_CONFIG as E } from '../config/environment';
 import { BOAT_CONFIG as B } from '../config/boat';
 import type { BoatState, SailingSettings, Vec2 } from '../physics/types';
 import { RACE_CONFIG as C } from './config';
+import { resolveWorldCollisions, type StaticObstacle, type CollisionContact } from '../physics/collisions';
+import { configureTerrainCourse } from '../world/terrain';
 
 export interface RaceOptions {
   mode: 'race' | 'series' | 'free' | 'start' | 'time-trial' | 'tutorial';
@@ -82,6 +84,7 @@ function emit(race: RaceState, event: Omit<RaceEvent, 'time'>) {
 function say(race: RaceState, racer: Racer, message: string) { racer.message = message; racer.messageUntil = race.time + 7; }
 export function createRace(options: RaceOptions, settings: SailingSettings): RaceState {
   const length = Math.max(60, options.courseLength);
+  configureTerrainCourse(options.mode === 'free' ? null : { windDirectionDeg: settings.windDirectionDeg, length });
   const course: Course = { startPin: { x: 0, z: 0 }, committee: { x: 0, z: 0 }, windward: { x: 0, z: 0 }, gatePort: { x: 0, z: 0 }, gateStarboard: { x: 0, z: 0 }, windDirectionDeg: settings.windDirectionDeg, length };
   const count = Math.max(0, Math.min(8, Math.round(options.aiCount))) + 1;
   const halfLine = Math.max(C.minimumLineWidth, count * C.lineWidthPerBoat) / 2;
@@ -182,38 +185,76 @@ function updateProgress(race: RaceState, racer: Racer) {
     racer.finishedAt = race.raceTime; racer.stage = 'done'; say(race, racer, 'Finished'); emit(race, { type: 'finish', racerId: racer.id });
   }
 }
-function checkContacts(race: RaceState, racers: Racer[]) {
+function checkContacts(race: RaceState, racers: Racer[], actualContacts?: CollisionContact[]) {
   for (let i = 0; i < racers.length; i++) for (let j = i + 1; j < racers.length; j++) {
     const a = racers[i], b = racers[j]; if (a.finishedAt !== null || b.finishedAt !== null || a.dnf || b.dnf) continue;
-    const key = `${a.id}/${b.id}`, old = race.contacts.get(key), separation = distance(a.state.position, b.state.position);
+    const actual = actualContacts?.find(contact => contact.kind === 'boat' && contact.a === a.id && contact.b === b.id);
+    if (actualContacts && !actual) continue;
+    const positionA = actual?.positionA ?? a.state.position, positionB = actual?.positionB ?? b.state.position;
+    const headingA = actual?.headingA ?? a.state.heading, headingB = actual?.headingB ?? b.state.heading;
+    const key = `${a.id}/${b.id}`, old = race.contacts.get(key), separation = distance(positionA, positionB);
     if (separation > C.separationDistance) { if (old) { old.active = false; old.asternId = null; } continue; }
-    const wind = sampleWind(a.state.position.x, a.state.position.z, a.state.time, race.settings);
-    const aStarboard = Math.sin(wind.direction - a.state.heading) > 0;
-    const bStarboard = Math.sin(wind.direction - b.state.heading) > 0;
+    const wind = sampleWind(positionA.x, positionA.z, a.state.time, race.settings);
+    const aStarboard = Math.sin(wind.direction - headingA) > 0;
+    const bStarboard = Math.sin(wind.direction - headingB) > 0;
     const contact = old ?? { at: -Infinity, active: false, asternId: null };
     // Remember a clear-astern approach through the hull overlap created by a rear-end collision.
     // A boat moving alongside establishes overlap and returns to the windward/leeward rule.
-    const heading = Math.atan2(Math.sin(a.state.heading) + Math.sin(b.state.heading), Math.cos(a.state.heading) + Math.cos(b.state.heading));
-    const dx = a.state.position.x - b.state.position.x, dz = a.state.position.z - b.state.position.z;
+    const heading = Math.atan2(Math.sin(headingA) + Math.sin(headingB), Math.cos(headingA) + Math.cos(headingB));
+    const dx = positionA.x - positionB.x, dz = positionA.z - positionB.z;
     const along = dx * Math.sin(heading) - dz * Math.cos(heading), across = dx * Math.cos(heading) + dz * Math.sin(heading);
-    if (aStarboard !== bStarboard || Math.cos(a.state.heading - b.state.heading) <= 0 || Math.abs(across) >= B.beamM) contact.asternId = null;
+    if (aStarboard !== bStarboard || Math.cos(headingA - headingB) <= 0 || Math.abs(across) >= B.beamM) contact.asternId = null;
     else if (Math.abs(along) >= B.lengthM) contact.asternId = along > 0 ? b.id : a.id;
     race.contacts.set(key, contact);
-    if (separation > C.contactDistance || contact.active || race.time - contact.at < C.incidentCooldown) continue;
+    if ((!actual && separation > C.contactDistance) || contact.active || race.time - contact.at < C.incidentCooldown) continue;
     let giveWay: Racer;
     if (aStarboard !== bStarboard) giveWay = aStarboard ? b : a;
     else if (contact.asternId) giveWay = contact.asternId === a.id ? a : b;
     else {
       const up = { x: Math.sin(wind.direction), z: -Math.cos(wind.direction) };
-      giveWay = dot({ x: a.state.position.x - b.state.position.x, z: a.state.position.z - b.state.position.z }, up) > 0 ? a : b;
+      giveWay = dot({ x: positionA.x - positionB.x, z: positionA.z - positionB.z }, up) > 0 ? a : b;
     }
     issuePenalty(race, giveWay, aStarboard !== bStarboard ? 'Port/starboard contact' : contact.asternId ? 'Clear-astern contact' : 'Windward/leeward contact');
     contact.at = race.time; contact.active = true;
   }
 }
+function courseObstacles(race: RaceState): StaticObstacle[] {
+  if (race.options.mode === 'free' || race.options.mode === 'tutorial' && race.phase === 'free') return [];
+  const c = race.course;
+  return [
+    ...(['startPin', 'windward', 'gatePort', 'gateStarboard'] as const).map(id => ({ id, kind: 'mark' as const, position: c[id], radius: E.markRadiusM })),
+    { id: 'committee', kind: 'committee', position: c.committee, heading: c.windDirectionDeg * DEG_TO_RAD, length: E.committeeLengthM, beam: E.committeeBeamM },
+  ];
+}
+function collide(race: RaceState, racers: Racer[], dt: number) {
+  // Judge the original encounter before minimum translations can swap windward/leeward positions.
+  if (race.phase === 'racing') checkContacts(race, racers);
+  const obstacles = courseObstacles(race);
+  const contacts = resolveWorldCollisions(racers.map(racer => ({ id: racer.id, state: racer.state, previousPosition: racer.previousPosition,
+    previousHeading: racer.previousHeading, wind: sampleWind(racer.state.position.x, racer.state.position.z, racer.state.time, { ...race.settings, windShadows: racers.filter(other=>other!==racer).map(other=>({position:other.state.position,heading:other.state.heading})) }), massKg: B.hullMassKg + race.settings.crewWeightKg + B.addedMassKg })), obstacles, dt);
+  if (race.phase !== 'racing') return;
+  checkContacts(race, racers, contacts);
+  for (const racer of racers) for (const obstacle of obstacles) {
+    const key = `${racer.id}/obstacle:${obstacle.id}`, old = race.contacts.get(key);
+    const hit = contacts.some(contact => contact.a === racer.id && contact.b === obstacle.id);
+    const clearDistance = B.lengthM / 2 + (obstacle.kind === 'mark' ? obstacle.radius : Math.hypot(obstacle.length, obstacle.beam) / 2) + 1;
+    if (!hit) { if (old && distance(racer.state.position, obstacle.position) > clearDistance) old.active = false; continue; }
+    const contact = old ?? { at: -Infinity, active: false, asternId: null };
+    if (!contact.active && race.time - contact.at >= C.incidentCooldown) {
+      issuePenalty(race, racer, obstacle.kind === 'mark' ? 'Mark contact' : 'Committee boat contact');
+      contact.at = race.time; contact.active = true;
+    }
+    race.contacts.set(key, contact);
+  }
+}
 /** Call once AFTER every boat has advanced through the same physics timestep. */
 export function stepRace(race: RaceState, racers: Racer[], dt: number) {
-  if (dt <= 0 || race.phase === 'finished') return;
+  if (dt <= 0) return;
+  collide(race, racers, dt);
+  if (race.phase === 'finished') {
+    for (const racer of racers) { racer.previousPosition = { ...racer.state.position }; racer.previousHeading = racer.state.heading; }
+    return;
+  }
   race.time += dt;
   if (race.phase === 'countdown') {
     const previous = race.countdown; race.countdown = Math.max(0, previous - dt);
@@ -230,7 +271,6 @@ export function stepRace(race: RaceState, racers: Racer[], dt: number) {
         }
       } else updateProgress(race, racer);
     }
-    checkContacts(race, racers);
     if (race.options.mode === 'start') {
       if (race.practiceRestartAt !== null && race.time >= race.practiceRestartAt) {
         race.phase = 'prestart'; race.practiceRestartAt = null; race.startTime = null;

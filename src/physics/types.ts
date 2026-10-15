@@ -82,4 +82,4 @@ export interface Telemetry {
   windShadow: number;
 }
 
-export type CameraMode = 'chase' | 'tactical';
+export type CameraMode = 'chase' | 'tactical' | 'diorama';

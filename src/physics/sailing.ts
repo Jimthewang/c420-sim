@@ -1,6 +1,7 @@
 import { BOAT_CONFIG as B } from '../config/boat';
 import { DEG_TO_RAD, ENVIRONMENT_CONFIG as E, KNOTS_TO_MPS } from '../config/environment';
 import type { BoatState, Controls, SailingSettings, SailState, Telemetry, Vec2, WindSample } from './types';
+import { resolveTerrainCollision } from './collisions';
 
 const TAU = Math.PI * 2;
 const clamp = (value: number, low: number, high: number) => Math.max(low, Math.min(high, value));
@@ -214,6 +215,7 @@ export function stepBoat(state: BoatState, controls: Controls, settings: Sailing
   state.mainSheet = clamp(controls.mainSheet, 0, 1);
   if (controls.jibSheet !== undefined) state.jibSheet = clamp(controls.jibSheet, 0, 1);
   for (let i = 0; i < steps; i++) {
+    const previousPosition = { ...state.position }, previousHeading = state.heading;
     const boardTarget = clamp(controls.board ?? state.centerboard, 0, 1);
     state.centerboard += clamp(boardTarget - state.centerboard, -B.boardMovePerSecond * h, B.boardMovePerSecond * h);
     if (state.capsized) {
@@ -231,6 +233,7 @@ export function stepBoat(state: BoatState, controls: Controls, settings: Sailing
         state.heel = Math.sign(state.heel) * B.recoveredHeelDeg * DEG_TO_RAD;
         state.crew.skipperX = state.crew.crewX = 0;
       }
+      resolveTerrainCollision(state, previousPosition, previousHeading, h, sampleWind(state.position.x, state.position.z, state.time, settings));
       continue;
     }
     const rudderTarget = clamp(controls.steer, -1, 1) * B.rudderMaxAngleDeg * DEG_TO_RAD;
@@ -264,6 +267,7 @@ export function stepBoat(state: BoatState, controls: Controls, settings: Sailing
     state.time += h;
     state.main = result.main;
     state.jib = result.jib;
+    resolveTerrainCollision(state, previousPosition, previousHeading, h, sampleWind(state.position.x, state.position.z, state.time, settings));
   }
 }
 

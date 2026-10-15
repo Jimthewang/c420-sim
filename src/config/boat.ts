@@ -2,6 +2,16 @@ export const BOAT_CONFIG = {
   lengthM: 4.2, // Overall Club 420 hull length from bow to transom.
   waterlineLengthM: 3.9, // Approximate immersed hull length used for wave-making resistance.
   beamM: 1.63, // Maximum hull width.
+  hullDraftM: 0.25, // Conservative hull-bottom depth enclosing the visible shell for shore contact.
+  hullRailHeightM: 0.6, // Upper hull and bow rail envelope, needed when a capsized shell lies against land.
+  boardLengthM: 1.1, // Shared visible and colliding centerboard span below its root.
+  boardTopY: -0.05, // Centerboard root relative to the boat model's waterline origin.
+  boardAftM: 0.02, // Centerboard root position aft of the hull centre.
+  boardMinExtension: 0.12, // Fraction of centerboard still exposed when fully raised.
+  rudderLengthM: 0.8, // Shared visible and colliding rudder blade span.
+  rudderTopY: 0.18, // Rudder blade root above the model's waterline origin.
+  rudderAftOffsetM: 0.095, // Blade centre lies this far aft of the transom.
+  foilChordClearanceM: 0.18, // Conservatively encloses both foils' chord and bevel at either end.
   hullMassKg: 105, // Hull and fitted gear weight before the two sailors are added.
   addedMassKg: 35, // Water accelerated along with the hull makes acceleration less immediate.
   mastHeightM: 6.26, // Approximate mast height for the visible rig.

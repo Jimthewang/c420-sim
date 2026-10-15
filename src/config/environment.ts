@@ -16,6 +16,47 @@ export const DEFAULT_SETTINGS: SailingSettings = {
 };
 
 export const ENVIRONMENT_CONFIG = {
+  terrainSeed: 420, // Initial reproducible island layout; changing seed rebuilds the same shared height field.
+  terrainIslandCount: 10, // Number of island centres distributed around the sailing area.
+  terrainIslandMinDistanceM: 120, // Nearest possible island centre to the launch origin.
+  terrainIslandMaxDistanceM: 450, // Farthest possible island centre to the launch origin.
+  terrainIslandMinRadiusM: 35, // Smallest full-support radius of an island's height field.
+  terrainIslandMaxRadiusM: 78, // Largest full-support radius of an island's height field.
+  terrainIslandMinHeightM: 14, // Lowest nominal island summit above the water.
+  terrainIslandMaxHeightM: 34, // Highest nominal island summit before local noise variation.
+  terrainDepthM: 8, // Flat ocean depth outside islands and inside protected navigation water.
+  terrainNoiseScaleM: 48, // Largest surface-detail wavelength for the four-octave gradient noise.
+  terrainNoiseOctaves: 4, // Four continuous Perlin layers add progressively finer terrain detail.
+  terrainNoisePersistence: 0.5, // Each finer noise layer contributes half the previous height variation.
+  terrainNoiseLacunarity: 2, // Each finer noise layer doubles spatial frequency.
+  terrainNoiseStrength: 0.35, // Relative roughness of the smooth island height envelope.
+  terrainCoastWarp: 0.9, // Four-layer noise bends the coastline before the compact island profile is applied.
+  terrainIslandMinAspect: 0.62, // Narrower islands form elongated headlands rather than repeated round hills.
+  terrainBayDepth: 0.95, // Bay-shaped islands remove this share of local land on their open side.
+  terrainBayWidth: 0.32, // Gaussian bay mouth width relative to island radius.
+  terrainReefMaxHeightM: 3.5, // Every fourth island is a low rocky reef rather than a tall summit.
+  terrainHarbourRadiusM: 95, // Clear water around the origin for launch and free-sailing manoeuvres.
+  terrainWaterBlendM: 22, // Smooth transition from protected deep water to natural island height.
+  terrainCourseHalfWidthMinM: 105, // Minimum clear half-width around a short racing course.
+  terrainCourseWidthPerLength: 0.75, // Longer courses have proportionally more clear tacking room.
+  terrainCourseBehindM: 140, // Clear prestart water below the line, including a large fleet's loitering area.
+  terrainCourseBeyondM: 80, // Clear water beyond the windward mark for rounding and approach.
+  terrainProtectedRadiusM: 8, // Keep a small safe water patch under each supplied boat when regenerating islands.
+  terrainGradientStepM: 0.05, // Central-difference distance for a stable shared terrain slope.
+  collisionSweepStepM: 0.3, // Maximum swept translation or bow rotation between contact checks.
+  collisionSkinM: 0.012, // Small clearance after separation prevents numerical overlap chatter.
+  collisionIterations: 12, // Revisit contacts to resolve boats squeezed between multiple solid hulls.
+  collisionChainPassesPerBodySquared: 4, // Extra convergence budget for a dense contact chain; clear passes exit immediately.
+  collisionRestitution: 0.06, // Dinghy hull impacts lose almost all closing normal speed.
+  collisionFriction: 0.16, // Tangential impulse relative to normal impact impulse for solid hulls.
+  terrainMeshClearanceM: 0.55, // Extra vertical clearance covers the three-metre render grid and probe spacing error.
+  terrainProbeSpacingM: 0.5, // Sample the rigid underwater envelope densely enough to follow coastal curvature.
+  terrainFriction: 0.25, // Shore rubbing dissipates tangential motion while permitting sliding.
+  terrainResolveIterations: 12, // Maximum slope projections for one ground-contact substep.
+  terrainMaxCorrectionM: 2, // Bound each gradient exit step on a steep or nearly flat island.
+  markRadiusM: 0.75, // Physical radius shared by all four course buoys and their rendered meshes.
+  committeeLengthM: 4.4, // Committee boat's oriented collision hull length.
+  committeeBeamM: 2, // Committee boat's oriented collision hull width.
   airDensityKgM3: 1.225, // Air density near sea level; sets sail force at a given breeze.
   waterDensityKgM3: 1025, // Salt-water density; sets foil forces and water resistance.
   fixedTimeStep: 1 / 120, // Simulate 120 small physics steps each second for stable foil response.
