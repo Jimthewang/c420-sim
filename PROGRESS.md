@@ -19,8 +19,10 @@ The force model is an early approximation. Its sail and resistance values are tu
 
 The boat is held upright and the centerboard is fixed down. Dynamic heel, capsizing, centerboard adjustment, planing, and refined tack/gybe behavior belong to Phase 2. Planing means the hull rises and skims over the water at higher speed. Moving sailors, racing, sound, opponents, and tutorials come in later phases. Unavailable heel and righting values are labeled as future work in the physics readout.
 
-The public GitHub Pages game is not live yet. Work remains on `phase-1-core` for delivery as one pull request—a reviewable proposal to change the repository. Publishing requires that request to be merged into `main`, followed by a successful Pages deployment. No direct push to `main` or automatic merge is planned. Local checks do not count as user acceptance or confirmed public deployment.
+The public GitHub Pages game is not live yet. The local game runs at `http://127.0.0.1:4173/c420-sim/`; double-click `Play C420.command` in this folder to start it again on this Mac.
+
+The game, deployment files, playing guide and local launcher are included in GitHub branch `phase-1-core`. Phase 1 is delivered as one pull request—a reviewable proposal to change the repository. Publishing requires that request to be approved and merged into `main`, followed by a successful Pages deployment. Pages must be configured to use GitHub Actions. No direct push to `main` or automatic merge is planned. Local checks do not count as user acceptance or confirmed public deployment.
 
 ### Next
 
-Deliver the Phase 1 pull request and stop for feedback. After approval and merge, verify the public game. Begin Phase 2 only after feedback on Phase 1.
+Check the Phase 1 pull request's automated run and collect feedback on the local game. After approval, configure Pages, merge, and verify the public game. Begin Phase 2 only after feedback on Phase 1.
