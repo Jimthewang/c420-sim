@@ -1,9 +1,10 @@
 import GUI from 'lil-gui';
 import { BOAT_CONFIG as B } from './config/boat';
 import { DEFAULT_SETTINGS, DEG_TO_RAD, ENVIRONMENT_CONFIG as E } from './config/environment';
-import { getTelemetry, stepBoat } from './physics/sailing';
+import { getTelemetry, handoffToManualCrew, stepBoat } from './physics/sailing';
 import type { CameraMode, Controls, SailingSettings } from './physics/types';
 import { createWorld } from './render/world';
+import { createBoatInterpolator } from './render/interpolation';
 import type { GraphicsQuality } from './render/types';
 import { createSailingAudio } from './audio';
 import { beginSequence, createRace, getRaceView, setPenaltyTurn, startTutorialRounding, stepRace, type RaceState } from './game/race';
@@ -20,6 +21,12 @@ const records=loadRecords(storage);
 const audio=createSailingAudio();
 let options:SetupOptions={mode:'race',difficulty:'beginner',aiCount:3,courseLength:220,laps:1,windSpeedKnots:10,crewWeightKg:130,spinnaker:false,lessonIndex:0};
 let race:RaceState=createRace({...options,mode:'free',aiCount:0},settings);
+function prepareDisplayBoats(){return race.racers.map(r=>{
+  const initial=getTelemetry(r.state,{...settings,autoCrew:r.isPlayer?settings.autoCrew:true});
+  r.state.main=initial.main;r.state.jib=initial.jib;
+  return createBoatInterpolator(r.state);
+});}
+let displayBoats=prepareDisplayBoats();
 let lesson:LessonState|null=null;
 let series:SeriesEntry[]=[];
 let raceNumber=1;
@@ -27,14 +34,14 @@ let cameraMode:CameraMode='chase';
 let resetCamera=()=>{};
 function cycleCamera(){cameraMode=cameraMode==='chase'?'diorama':cameraMode==='diorama'?'tactical':'chase';ui.setCamera(cameraMode);focusWater();}
 let started=false,paused=false,helpOpen=false,settingsOpen=false,debugOpen=false,resultsOpen=false;
-let accumulator=0,previousFrame=0,hudTimer=0,manualHike=0,lessonSaved=false;
+let accumulator=0,previousFrame=0,hudTimer=0,frameMs=0,manualHike=0,lessonSaved=false;
 let stats={sailing:0,pinching:0,luffing:0,stalled:0,capsizes:0,lastCapsized:false};
 let previousBeep=180;
 let bestRecorded=false,newPersonalBest=false;
 const keys=new Set<string>();
 const canvas=document.querySelector<HTMLCanvasElement>('#ocean')!;
 const player=()=>race.racers[0];
-const clearInput=()=>{keys.clear();player().state.rudder=0;};
+const clearInput=()=>{keys.clear();};
 const focusWater=()=>canvas.focus({preventScroll:true});
 function unlockAudio(){audio.setEnabled(preferences.sound);void audio.unlock();}
 function saveProgress(){const saved=saveRecords(records,storage);ui.showSaved(records.lessons.length,Object.keys(records.bests).length,records.seriesWins);return saved;}
@@ -56,6 +63,7 @@ function launch(setup:SetupOptions,continueSeries=false){
     if(lesson.index===3){player().state.heading=(settings.windDirectionDeg+145)*DEG_TO_RAD;player().state.mainSheet=.15;}
     if(lesson.index===4)startTutorialRounding(race);
   }
+  displayBoats=prepareDisplayBoats();
   stats={sailing:0,pinching:0,luffing:0,stalled:0,capsizes:0,lastCapsized:false};
   started=true;paused=false;resultsOpen=false;accumulator=0;previousBeep=180;
   ui.showStarted(options.mode);ui.showPaused(false);audio.setPaused(false);setTuningLock();focusWater();
@@ -87,7 +95,9 @@ const lockedControllers=[
   gui.add(settings,'shifts').name('Wind shifts'),gui.add(settings,'gusts').name('Puffs & lulls'),
   gui.add(settings,'spinnaker').name('Spinnaker'),
 ];
-gui.add(settings,'autoCrew').name('Automatic crew').listen();
+gui.add(settings,'autoCrew').name('Automatic crew').listen().onChange((automatic:boolean)=>{
+  if(!automatic)manualHike=handoffToManualCrew(player().state,settings).hike;
+});
 gui.add(preferences,'sound').name('Sound').onChange(()=>{unlockAudio();});
 gui.add(preferences,'finalBeeps').name('Final 10s beeps (aid)');
 gui.add(preferences,'quality',['low','medium','high']).name('Graphics quality');
@@ -126,7 +136,7 @@ function userControls(dt:number):Controls {
   if(state.capsized&&options.difficulty==='beginner')return {steer:0,mainSheet:0,board:1,righting:true};
   return {steer,mainSheet,board,jibSheet,hike:manualHike,righting:keys.has('f'),rollTack:keys.has(' ')};
 }
-function recordKey(){return [options.mode==='series'?'race':options.mode,options.windSpeedKnots,settings.windDirectionDeg,settings.shifts,settings.gusts,settings.crewWeightKg,Boolean(settings.spinnaker),options.courseLength,options.laps,options.difficulty,race.racers.length-1].join(':');}
+function recordKey(){return ['motion-2',options.mode==='series'?'race':options.mode,options.windSpeedKnots,settings.windDirectionDeg,settings.shifts,settings.gusts,settings.crewWeightKg,Boolean(settings.spinnaker),options.courseLength,options.laps,options.difficulty,race.racers.length-1].join(':');}
 function recordFinish(){
   if(bestRecorded||lesson||player().finishedAt===null)return;
   bestRecorded=true;newPersonalBest=saveBest(records,recordKey(),player().finishedAt!);saveProgress();
@@ -152,12 +162,15 @@ try{
   const world=createWorld(canvas);resetCamera=world.resetCamera;window.addEventListener('resize',world.resize);
   canvas.addEventListener('webglcontextlost',event=>{event.preventDefault();paused=true;audio.setPaused(true);ui.showError('The graphics connection was lost. Close a few other tabs, then try again.');});
   function frame(timestamp:number){
-    const dt=previousFrame===0?0:Math.min((timestamp-previousFrame)/1000,E.maxFrameDelta);previousFrame=timestamp;
+    const elapsed=previousFrame===0?0:timestamp-previousFrame;
+    if(elapsed>0)frameMs=frameMs===0?elapsed:frameMs+(elapsed-frameMs)*Math.min(1,elapsed/500);
+    const dt=Math.min(elapsed/1000,E.maxFrameDelta);previousFrame=timestamp;
     const running=started&&!paused&&!helpOpen&&!resultsOpen&&!lesson?.passed;
     if(running){
       accumulator+=dt;
       while(accumulator>=E.fixedTimeStep){
         const step=E.fixedTimeStep;
+        for(const display of displayBoats)display.capture();
         const shadows=race.racers.map(r=>({id:r.id,position:{...r.state.position},heading:r.state.heading}));
         const controls=userControls(step);
         for(const racer of race.racers){
@@ -178,17 +191,18 @@ try{
         if(race.phase==='finished'&&!lesson){finish();break;}
         if(lesson?.passed)break;
       }
-    }else accumulator=0;
+    }else {accumulator=0;for(const display of displayBoats)display.reset();}
     const state=player().state;const shadowSettings={...settings,windShadows:race.racers.slice(1).map(r=>({position:r.state.position,heading:r.state.heading}))};
-    const telemetry=getTelemetry(state,shadowSettings);state.main=telemetry.main;state.jib=telemetry.jib;
+    const telemetry=getTelemetry(state,shadowSettings);
     const view=getRaceView(race);const showCourse=started&&options.mode!=='free'&&(!lesson||lesson.index>=4);
-    world.render(state,telemetry,settings,cameraMode,running||!started?dt:0,{opponents:race.racers.slice(1).map(r=>({id:r.id,name:r.name,boat:r.state,color:r.color})),course:showCourse?race.course:null,target:showCourse?view.nextTarget:null,difficulty:options.difficulty,quality:preferences.quality,spinnaker:settings.spinnaker,outlines:preferences.outlines,daylight:preferences.daylight,terrainSeed:preferences.terrainSeed});
+    const display=displayBoats.map(b=>b.sample(running?accumulator/E.fixedTimeStep:1));
+    world.render(display[0],telemetry,settings,cameraMode,running?dt:0,{opponents:race.racers.slice(1).map((r,i)=>({id:r.id,name:r.name,boat:display[i+1],color:r.color})),course:showCourse?race.course:null,target:showCourse?view.nextTarget:null,difficulty:options.difficulty,quality:preferences.quality,spinnaker:settings.spinnaker,outlines:preferences.outlines,daylight:preferences.daylight,terrainSeed:preferences.terrainSeed});
     audio.setPaused(!running);audio.update(state,telemetry,running?dt:0);
     hudTimer+=dt;
     if(hudTimer>=.1||!running){
       const distance=view.nextTarget?Math.hypot(view.nextTarget.x-state.position.x,view.nextTarget.z-state.position.z):NaN;
       const hud:HudView={phase:view.phase,timer:view.phase==='prestart'||view.phase==='countdown'?view.countdown:view.elapsed,place:view.place,total:race.racers.length,target:view.targetLabel,distance,message:view.playerFinished&&race.phase!=='finished'?'You finished · watching the remaining fleet':view.message,difficulty:options.difficulty,mode:options.mode,raceNumber,penalty:view.penaltyTurns>0,finished:view.playerFinished,practiceStarts:view.practiceStarts,autoCrew:settings.autoCrew!==false};
-      ui.update(state,telemetry,cameraMode,hud,lesson);hudTimer=0;
+      ui.update(state,telemetry,cameraMode,hud,lesson);ui.setFrameRate(frameMs>0?1000/frameMs:0);hudTimer=0;
     }
     requestAnimationFrame(frame);
   }

@@ -5,6 +5,7 @@ import { createSailor } from './crew';
 import { buoyancyTankGeometry, foilGeometry, hullGeometry, hullSection, ovalLoft } from './geometry';
 import { attachOutline, toonMaterial, updateOutline } from './toon';
 import { getBoatWavePose } from '../world/waves';
+import { tillerJoint, TILLER_EXTENSION_LENGTH } from './rigging';
 
 /** The model faces local north (-z); its dimensions are in metres. */
 export function createDinghy(options: { simplified?: boolean; color?: number } = {}) {
@@ -161,13 +162,33 @@ export function createDinghy(options: { simplified?: boolean; color?: number } =
   const mainSail = mesh(mainGeometry, sailMaterial, mainRig, 0.004);
   const jibGeometry = mainGeometry.clone();
   const jibSail = mesh(jibGeometry, jibMaterial, boat, 0.004);
+  function telltale(color: number, name: string, parent = boat) {
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(30), 3));
+    geometry.setIndex([0, 1, 2, 1, 3, 2, 2, 3, 4, 3, 5, 4, 4, 5, 6, 5, 7, 6, 6, 7, 8, 7, 9, 8]);
+    const ribbon = new THREE.Mesh(geometry, toonMaterial(color, { side: THREE.DoubleSide }));
+    ribbon.name = name; parent.add(ribbon); return ribbon;
+  }
   const telltales = [-1, 1].map((side) => ({
     side,
-    main: line([[0, 0, 0], [0, 0, 0]], new THREE.LineBasicMaterial({ color: side > 0 ? 0x43805c : 0xb95c4d }), mainRig),
-    jib: line([[0, 0, 0], [0, 0, 0]], new THREE.LineBasicMaterial({ color: side > 0 ? 0x43805c : 0xb95c4d })),
+    main: telltale(side > 0 ? 0x258e52 : 0xd94135, `main-telltale-${side}`, mainRig),
+    jib: telltale(side > 0 ? 0x258e52 : 0xd94135, `jib-telltale-${side}`),
   }));
+  function updateTelltale(ribbon: THREE.Mesh, start: THREE.Vector3, flow: THREE.Vector3, status: BoatState['main']['status'], side: number, loadedSide: number, time: number) {
+    const positions = ribbon.geometry.getAttribute('position') as THREE.BufferAttribute;
+    const separated = status === 'stalled' && side === loadedSide;
+    for (let i = 0; i <= 4; i++) {
+      const t = i / 4;
+      const flutter = Math.sin(time * (status === 'luffing' ? 23 : 8) + i * 1.4 + side);
+      const run = 0.24 * t * (separated ? 0.36 : 1);
+      const wave = status === 'luffing' ? flutter * 0.085 * t : separated ? -Math.sin(t * Math.PI / 2) * 0.16 : flutter * 0.009 * t;
+      for (let edge = 0; edge < 2; edge++) positions.setXYZ(i * 2 + edge,
+        start.x + flow.x * run, start.y + wave + (edge ? 1 : -1) * 0.007 * (1 - t * 0.45), start.z + flow.z * run);
+    }
+    positions.needsUpdate = true; ribbon.geometry.computeVertexNormals(); ribbon.geometry.computeBoundingSphere();
+  }
   const mainSheet = line([[0, boomHeight, 1], [0, 0.3, 0.8], [0, 0.49, 0.67]]);
-  const jibSheets = [-1, 1].map((side) => line([[0, 0.55, -0.45], [side * 0.57, 0.39, 0.03]]));
+  const jibSheets = [-1, 1].map((side) => line([[0, 0.55, -0.45], [side * 0.57, 0.39, 0.03], [0, 0.49, -0.48]]));
 
   const skipper = createSailor(options.color ?? 0xff6b6b, !!options.simplified);
   const crew = createSailor(0xffe144, !!options.simplified);
@@ -202,16 +223,15 @@ export function createDinghy(options: { simplified?: boolean; color?: number } =
   const pole = spar(poleStart, poleEnd, 0.018);
   const spinSheets = [-1, 1].map((side) => line([[side * 1.45, jibTop - 3.55, mastZ - 1.05], [side * 0.65, 0.42, 0.4]]));
 
-  let previousBoom = 0, previousTime: number | undefined;
-  const wrapAngle = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
+  let previousBoom = 0, previousTime: number | undefined, previousState: BoatState | undefined;
   function update(state: BoatState, deploySpinnaker = false, trueWindAngleDeg = 0, windSpeedKnots = 10, windDirectionRad = 0) {
     const wave = getBoatWavePose(state, windSpeedKnots, windDirectionRad);
     boat.position.set(state.position.x, wave.height, state.position.z);
     boat.rotation.set(wave.pitch, -state.heading, -state.heel + wave.roll, 'YXZ');
     board.scale.y = BOAT_CONFIG.boardMinExtension + state.centerboard * (1 - BOAT_CONFIG.boardMinExtension);
-    const dt = previousTime === undefined || state.time < previousTime ? 0 : state.time - previousTime;
+    const dt = previousState !== state || previousTime === undefined || state.time < previousTime ? 0 : state.time - previousTime;
     if (!dt) previousBoom = state.main.angle;
-    const rate = dt > 0 ? wrapAngle(state.main.angle - previousBoom) / dt : 0;
+    const rate = state.mainAngularVelocity;
     const windAngle = Math.abs(trueWindAngleDeg);
     const turning = Math.min(1, Math.abs(state.yawRate) / 0.06);
     const gybeSoon = THREE.MathUtils.smoothstep(windAngle, 158, 174) * turning;
@@ -220,8 +240,8 @@ export function createDinghy(options: { simplified?: boolean; color?: number } =
     const predicted = anticipation > 0 ? -state.main.angle : THREE.MathUtils.clamp(state.main.angle + rate * 0.28, -1.5, 1.5);
     const sweep = { from: previousBoom, to: state.main.angle, predicted, anticipation: Math.max(anticipation, Math.min(1, Math.abs(rate) * 0.25)) };
     const skipperPose = skipper.update(state, 'skipper', sweep);
-    crew.update(state, 'crew', sweep);
-    previousBoom = state.main.angle; previousTime = state.time;
+    const crewPose = crew.update(state, 'crew', sweep);
+    previousBoom = state.main.angle; previousTime = state.time; previousState = state;
     spinnaker.visible = deploySpinnaker && Math.abs(trueWindAngleDeg) > BOAT_CONFIG.spinnakerMinAngleDeg && !state.capsized;
     pole.visible = spinnaker.visible && !options.simplified;
     spinSheets.forEach((sheet) => { sheet.visible = pole.visible; });
@@ -230,26 +250,37 @@ export function createDinghy(options: { simplified?: boolean; color?: number } =
     const mainPosition = mainGeometry.getAttribute('position') as THREE.BufferAttribute;
     const jibPosition = jibGeometry.getAttribute('position') as THREE.BufferAttribute;
     const mainSide = Math.sign(state.main.angle) || 1;
-    const jibSide = Math.sign(state.jib.angle) || 1;
     poleEnd.x = -mainSide * 1.45;
     pole.position.copy(poleStart).lerp(poleEnd, 0.5);
     pole.scale.y = poleStart.distanceTo(poleEnd) / poleLength;
     pole.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), poleEnd.clone().sub(poleStart).normalize());
+    const breeze = THREE.MathUtils.clamp(windSpeedKnots / 20, 0, 1.5);
+    const mainLoad = THREE.MathUtils.clamp(Math.hypot(state.main.lift, state.main.drag) / (BOAT_CONFIG.mainAreaM2 * 45), 0, 1);
+    const jibLoad = THREE.MathUtils.clamp(Math.hypot(state.jib.lift, state.jib.drag) / (BOAT_CONFIG.jibAreaM2 * 45), 0, 1);
+    // Cloth settles to the load; the foot and actual rig angle remain physics-owned.
+    const mainFill = state.main.status === 'luffing' ? 0.22 : 1;
+    const jibFill = state.jib.status === 'luffing' ? 0.22 : 1;
     for (let row = 0; row <= rows; row++) {
       const h = row / rows;
       for (let column = 0; column <= columns; column++) {
         const f = column / columns;
         const index = row * (columns + 1) + column;
         const chord = mainFoot * (1 - h) + 0.24 * Math.sin(h * Math.PI);
-        const flutter = state.main.status === 'luffing' ? Math.sin(state.time * 23 + h * 17 + f * 8) * 0.055 * f : 0;
-        const mainCamber = mainSide * 0.11 * chord * Math.sin(f * Math.PI) * Math.sin((h * 0.9 + 0.05) * Math.PI);
-        mainPosition.setXYZ(index, mainCamber + flutter, mainHeight * h + Math.sin(f * Math.PI) * 0.04, chord * f);
+        const windFlutter = Math.min(1.5, breeze + 0.3);
+        const flutter = state.main.status === 'luffing' ? Math.sin(state.time * (16 + breeze * 10) + h * 17 + f * 8) * 0.055 * f * windFlutter : 0;
+        const mainCamber = Math.tanh(state.main.angle * 8) * (0.075 + 0.045 * mainLoad) * mainFill * chord * Math.sin(f * Math.PI) * Math.sin((h * 0.9 + 0.05) * Math.PI);
+        const mainTwist = Math.tanh(state.main.angle * 8) * THREE.MathUtils.degToRad(BOAT_CONFIG.mainEffectiveTwistDeg) * h ** 1.4 * (0.55 + 0.45 * breeze);
+        const draft = mainCamber + flutter, aft = chord * f;
+        mainPosition.setXYZ(index, draft * Math.cos(mainTwist) + aft * Math.sin(mainTwist), mainHeight * h + Math.sin(f * Math.PI) * 0.04, aft * Math.cos(mainTwist) - draft * Math.sin(mainTwist));
         const jibChord = BOAT_CONFIG.jibFootM * (1 - h);
-        const jibFlutter = state.jib.status === 'luffing' ? Math.sin(state.time * 29 + h * 12 + f * 8) * 0.045 * f : 0;
+        const jibFlutter = state.jib.status === 'luffing' ? Math.sin(state.time * (21 + breeze * 10) + h * 12 + f * 8) * 0.045 * f * windFlutter : 0;
+        const jibTwist = Math.tanh(state.jib.angle * 8) * THREE.MathUtils.degToRad(BOAT_CONFIG.jibEffectiveTwistDeg) * h ** 1.4 * (0.55 + 0.45 * breeze);
+        const jibAngle = state.jib.angle + jibTwist;
+        const jibDraft = Math.tanh(state.jib.angle * 8) * (0.075 + 0.055 * jibLoad) * jibFill * jibChord * Math.sin(f * Math.PI) + jibFlutter;
         jibPosition.setXYZ(index,
-          Math.sin(state.jib.angle) * jibChord * f + jibSide * 0.12 * jibChord * Math.sin(f * Math.PI) + jibFlutter,
+          Math.sin(jibAngle) * jibChord * f + Math.cos(jibAngle) * jibDraft,
           0.53 + (jibTop - 0.55) * h + 0.16 * f * (1 - h),
-          jibTackZ + (mastZ - jibTackZ) * h + Math.cos(state.jib.angle) * jibChord * f);
+          jibTackZ + (mastZ - jibTackZ) * h + Math.cos(jibAngle) * jibChord * f - Math.sin(jibAngle) * jibDraft);
       }
     }
     mainPosition.needsUpdate = true;
@@ -259,30 +290,32 @@ export function createDinghy(options: { simplified?: boolean; color?: number } =
     mainGeometry.computeBoundingSphere();
     jibGeometry.computeBoundingSphere();
     updateOutline(mainSail); updateOutline(jibSail);
+    const airflow = new THREE.Vector3(-Math.sin(windDirectionRad) * windSpeedKnots * 0.514444 - state.velocity.x, 0,
+      Math.cos(windDirectionRad) * windSpeedKnots * 0.514444 - state.velocity.z).applyAxisAngle(new THREE.Vector3(0, 1, 0), state.heading).normalize();
+    const mainFlow = airflow.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), -state.main.angle);
+    // Wool follows the along-cloth apparent flow; its free tail lifts while luffing
+    // and the leeward tail drops into separated air when the sail stalls.
+    mainFlow.set(mainFlow.x * 0.12, 0, mainFlow.z).normalize();
+    const jibAlong = new THREE.Vector3(Math.sin(state.jib.angle), 0, Math.cos(state.jib.angle));
+    const jibFlow = jibAlong.multiplyScalar(airflow.dot(jibAlong) >= 0 ? 1 : -1);
+    const telltaleIndex = Math.round(rows * 0.5) * (columns + 1) + Math.round(columns * 0.33);
     for (const { side, main, jib } of telltales) {
-      const h = 0.5;
-      const chord = mainFoot * (1 - h) + 0.24;
-      const x = mainSide * 0.1 * chord + side * 0.012;
-      const luff = state.main.status === 'luffing' ? Math.sin(state.time * 28 + side) * 0.14 : 0;
-      const stall = state.main.status === 'stalled' && side === mainSide ? -0.15 : 0;
-      main.geometry.setFromPoints([new THREE.Vector3(x, mainHeight * h, chord * 0.5), new THREE.Vector3(x + luff, mainHeight * h + luff + stall, chord * 0.5 + 0.19)]);
-      const jibIndex = Math.round(rows * 0.5) * (columns + 1) + 5;
-      const start = new THREE.Vector3().fromBufferAttribute(jibPosition, jibIndex);
-      start.x += side * 0.012;
-      const jibLuff = state.jib.status === 'luffing' ? Math.sin(state.time * 30 + side) * 0.12 : 0;
-      const end = start.clone().add(new THREE.Vector3(Math.sin(state.jib.angle) * 0.17 + jibLuff, jibLuff + (state.jib.status === 'stalled' ? -0.1 : 0), Math.cos(state.jib.angle) * 0.17));
-      jib.geometry.setFromPoints([start, end]);
+      const mainStart = new THREE.Vector3().fromBufferAttribute(mainPosition, telltaleIndex); mainStart.x += side * 0.018;
+      const jibStart = new THREE.Vector3().fromBufferAttribute(jibPosition, telltaleIndex);
+      jibStart.x += side * Math.cos(state.jib.angle) * 0.018; jibStart.z -= side * Math.sin(state.jib.angle) * 0.018;
+      updateTelltale(main, mainStart, mainFlow, state.main.status, side, mainSide, state.time);
+      updateTelltale(jib, jibStart, jibFlow, state.jib.status, side, Math.sign(state.jib.angle) || 1, state.time);
     }
     const sheetPoint = new THREE.Vector3(0, 0, mainFoot * 0.78).applyAxisAngle(new THREE.Vector3(0, 1, 0), state.main.angle);
 
     mainSheet.geometry.setFromPoints([new THREE.Vector3(sheetPoint.x, boomHeight, mastZ + sheetPoint.z), new THREE.Vector3(0, 0.3, 0.8), skipperPose.hands[0]]);
-    const tillerTip = new THREE.Vector3(0, 0.14, -0.8).applyAxisAngle(new THREE.Vector3(0, 1, 0), state.rudder).add(rudder.position);
-    const tillerHand = skipperPose.hands[1].clone();
+    const tillerTip = tillerJoint(state);
+    const tillerHand = skipperPose.hands[1].clone().sub(tillerTip).normalize().multiplyScalar(TILLER_EXTENSION_LENGTH).add(tillerTip);
     tillerExtension.position.copy(tillerTip).lerp(tillerHand, 0.5);
-    tillerExtension.scale.y = tillerTip.distanceTo(tillerHand) / Math.hypot(0.47, 0.17);
+    tillerExtension.scale.y = TILLER_EXTENSION_LENGTH / Math.hypot(0.47, 0.17);
     tillerExtension.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), tillerHand.sub(tillerTip).normalize());
     const clew = new THREE.Vector3().fromBufferAttribute(jibPosition, columns);
-    jibSheets.forEach((sheet, index) => sheet.geometry.setFromPoints([clew, new THREE.Vector3(index === 0 ? -0.57 : 0.57, 0.39, 0.03)]));
+    jibSheets.forEach((sheet, index) => sheet.geometry.setFromPoints([clew, new THREE.Vector3(index === 0 ? -0.57 : 0.57, 0.39, 0.03), crewPose.hands[index]]));
   }
 
   return { object: boat, update, sailTexture };

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import * as THREE from 'three';
 import { attachOutline, buildOutlineGeometry, disposeOutlines, setOutlinesEnabled, toonMaterial, updateOutline } from './toon';
 
@@ -43,5 +43,38 @@ describe('toy shading and continuous outline shells', () => {
     expect(outline.instanceMatrix).toBe(source.instanceMatrix);
     expect(outline.instanceColor).toBeNull();
     disposeOutlines(source);
+  });
+  it('reuses dynamic shell storage without rebuilding geometry after topology is established', () => {
+    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(2, 3, 4, 5), toonMaterial(0xffffff));
+    const shell = attachOutline(mesh), geometry = shell.geometry, position = geometry.getAttribute('position');
+    updateOutline(mesh);
+    const clone = vi.spyOn(THREE.BufferGeometry.prototype, 'clone');
+    mesh.geometry.translate(0, .4, 0); updateOutline(mesh);
+    expect(clone).not.toHaveBeenCalled(); clone.mockRestore();
+    expect(shell.geometry).toBe(geometry); expect(shell.geometry.getAttribute('position')).toBe(position);
+    const expected = buildOutlineGeometry(mesh.geometry, .025);
+    expect(Array.from(position.array)).toEqual(Array.from(expected.getAttribute('position').array));
+    expected.dispose(); disposeOutlines(mesh);
+  });
+  it('defers hidden shell work and catches up when ink is enabled', () => {
+    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(2, 3), toonMaterial(0xffffff));
+    const shell = attachOutline(mesh), position = shell.geometry.getAttribute('position'), before = position.getY(0);
+    setOutlinesEnabled(false); mesh.geometry.translate(0, 2, 0); updateOutline(mesh);
+    const hiddenY = position.getY(0);
+    setOutlinesEnabled(true);
+    expect(hiddenY).toBe(before); expect(position.getY(0)).toBeCloseTo(before + 2);
+    disposeOutlines(mesh);
+  });
+  it('establishes welds after a collapsed sail receives its first real positions', () => {
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(12), 3));
+    geometry.setIndex([0, 1, 2, 1, 3, 2]);
+    const mesh = new THREE.Mesh(geometry, toonMaterial(0xffffff)), shell = attachOutline(mesh);
+    updateOutline(mesh);
+    geometry.getAttribute('position').array.set([0, 0, 0, 1, 0, .2, 0, 1, 0, 1, 1, .2]);
+    geometry.getAttribute('position').needsUpdate = true; updateOutline(mesh);
+    const expected = buildOutlineGeometry(geometry, .025);
+    expect(Array.from(shell.geometry.getAttribute('position').array)).toEqual(Array.from(expected.getAttribute('position').array));
+    expected.dispose(); disposeOutlines(mesh);
   });
 });

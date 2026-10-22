@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 import { getWaveHeight, sampleWave } from './waves';
+import { prepareWaveHeightSampler, sampleWaveSurface } from '../world/waves';
 
 describe('shared sea surface', () => {
   it('has a unit normal matching the numerical surface gradient', () => {
@@ -27,5 +28,14 @@ describe('shared sea surface', () => {
     const sample = { height: 0, normal: new THREE.Vector3() }, normal = sample.normal;
     expect(sampleWave(2, 7, 5, 10, 0, sample)).toBe(sample);
     expect(sample.normal).toBe(normal);
+  });
+  it('prepared height sampling preserves every wave component and local wind strength', () => {
+    for (const time of [0, 17, 251]) for (const direction of [0, 1.2, 4.7]) {
+      const height = prepareWaveHeightSampler(time, direction);
+      for (let i = 0; i < 50; i++) {
+        const x = i * 19 - 450, z = i * -17 + 200, wind = 4 + i % 25;
+        expect(height(x, z, wind)).toBeCloseTo(sampleWaveSurface(x, z, time, wind, direction).height, 11);
+      }
+    }
   });
 });

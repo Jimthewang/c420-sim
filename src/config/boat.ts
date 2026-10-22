@@ -30,6 +30,11 @@ export const BOAT_CONFIG = {
   maxMainAngleDeg: 88, // Fully eased boom angle; sheeting cannot force it past square.
   minJibAngleDeg: 10, // Tightest jib lead angle used by the automatic crew.
   maxJibAngleDeg: 80, // Fully eased jib angle on a deep reach or run.
+  mainMaxAngularSpeedDegPerSecond: 160, // The boom takes finite time to cross; this bounds its visible and aerodynamic motion.
+  mainAngularAccelerationDegPerSecond2: 720, // Rig inertia limits how quickly the boom starts and brakes its swing.
+  jibMaxAngularSpeedDegPerSecond: 220, // The lighter jib crosses faster than the boom without teleporting.
+  jibAngularAccelerationDegPerSecond2: 1100, // Cloth and sheet take-up give the jib a finite acceleration.
+  rigAngularResponsePerSecond: 8, // Critically damped angular response brakes the rig smoothly as it reaches its sheet limit.
   mainEffectiveTwistDeg: 14, // Upper mainsail sections are eased beyond the boom; a lumped spanwise twist approximation.
   jibEffectiveTwistDeg: 12, // Upper jib sections are eased beyond its foot; limits how high the rig can point.
   jibTargetAttackDeg: 10, // Automatic crew aims for attached flow near the useful lift peak.
@@ -109,13 +114,15 @@ export const BOAT_CONFIG = {
   planingSprayDragKgPerM: 6, // Spray and bottom pressure add speed-squared resistance after the hull rises.
   spinnakerMinAngleDeg: 100, // The spinnaker fills only on a broad reach or run.
   spinnakerDragCoefficient: 1.35, // Pressure force of the filled spinnaker in following apparent wind.
-  maneuverDeadbandDeg: 4, // A small wind-side deadband prevents repeated tack/gybe counts near the crossing.
-  rollTackMinIntervalSeconds: 8, // A new roll tack cannot repeatedly harvest energy while oscillating head to wind.
+  maneuverDeadbandDeg: 20, // A maneuver is recorded only after sailing clearly onto the other wind side.
+  maneuverMinHeadingChangeDeg: 20, // Wind shifts alone cannot substitute for this actual hull turn.
+  rollTackMinIntervalSeconds: 8, // Crew needs time to reset before another coordinated roll sequence.
   rollTackMaxWindKnots: 14, // Roll tacks are useful only before heavy-air hiking dominates handling.
-  rollTackCrewDropM: 0.12, // Crew movement has this bounded gravitational energy available during a roll tack.
-  rollTackEfficiency: 0.45, // Only part of crew work contributes to forward motion during flattening.
-  rollTackPowerWatts: 42, // Maximum rate at which flattening can transfer crew work into boat motion.
-  rollTackMinSpeedMps: 0.6, // Flattening has no modeled propulsive benefit when stopped head to wind.
-  rollTackWindowSeconds: 3, // Crew work is transferred only during the short exit from a tack.
-  gybeRollImpulse: 0.012, // Boom crossing adds roll rate per squared apparent-wind speed when the sheet is loose.
+  rollTackTriggerAngleDeg: 8, // A requested roll begins just after the bow crosses head to wind.
+  rollTackMinSpeedMps: 0.6, // A stopped boat cannot start the coordinated roll-tack sequence.
+  rollTackHoldSeconds: 0.4, // The sailors briefly remain on the old side after crossing the wind.
+  rollTackFlattenSeconds: 0.85, // They then cross to the new windward side and flatten the hull.
+  rollTackLeverShare: 0.55, // The coordinated action uses this fraction of the available crew lever.
+  rollTackMaxHeelDeg: 18, // Begin flattening early once the intended roll angle is reached.
+  gybeRollImpulse: 0.012, // Actual boom-centreline crossing adds roll rate per squared apparent-wind speed with loose sheets.
 };

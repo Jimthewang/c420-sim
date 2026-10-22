@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { BOAT_CONFIG as B } from '../config/boat';
 import { DEFAULT_SETTINGS, ENVIRONMENT_CONFIG as E } from '../config/environment';
 import { getBoatWavePose } from '../world/waves';
@@ -7,6 +7,7 @@ import { hullGeometry, foilGeometry } from '../render/geometry';
 import { createBoatState, stepBoat } from './sailing';
 import { getBoatTerrainClearance, resolveTerrainCollision, resolveWorldCollisions } from './collisions';
 import { configureTerrainCourse, getTerrainGradient, getTerrainHeight, getTerrainIslands, getTerrainSeed, protectTerrainPoints, setTerrainSeed } from '../world/terrain';
+import * as terrain from '../world/terrain';
 
 beforeEach(() => { setTerrainSeed(420); configureTerrainCourse(null); protectTerrainPoints([]); });
 
@@ -149,6 +150,28 @@ describe('terrain contact envelope', () => {
 });
 
 describe('rigid hull impulses', () => {
+  it('stops projecting a separated shore contact once its position cannot change', () => {
+    const island=getTerrainIslands().find(i=>Math.hypot(i.x,i.z)>230)!;
+    const state=createBoatState();state.heading=Math.PI/2;state.time=12;
+    const outside={x:island.x-island.radius-8,z:island.z};
+    state.position={x:island.x,z:island.z};
+    resolveTerrainCollision(state,outside,state.heading,1);
+    expect(getBoatTerrainClearance(state)).toBeGreaterThan(0);
+    const before={...state.position};
+    const bodies=Array.from({length:9},(_,index)=>{
+      const boat=index?createBoatState():state;
+      if(index)boat.position={x:index*8,z:0};
+      return {id:String(index),state:boat,previousPosition:{...boat.position},previousHeading:boat.heading,massKg:270};
+    });
+    const broadPhase=vi.spyOn(terrain,'isTerrainDeepWater');
+    try {
+      resolveWorldCollisions(bodies,[],E.fixedTimeStep);
+      // A stationary separated fleet needs no repeated full-fleet projection passes.
+      expect(broadPhase.mock.calls.length).toBeLessThanOrEqual(bodies.length*2);
+      expect(state.position).toEqual(before);
+      expect(getBoatTerrainClearance(state)).toBeGreaterThan(0);
+    } finally { broadPhase.mockRestore(); }
+  });
   it('catches opposing fast hulls that exchange sides inside a large timestep', () => {
     const a=createBoatState(),b=createBoatState();a.heading=b.heading=Math.PI/2;
     a.position={x:15,z:0};b.position={x:-15,z:0};a.velocity={x:30,z:0};b.velocity={x:-30,z:0};

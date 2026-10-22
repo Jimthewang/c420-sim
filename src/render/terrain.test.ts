@@ -87,4 +87,48 @@ describe('NPR island and water meshes', () => {
     expect(checked).toBeGreaterThan(1000);
     patch.dispose();
   });
+  it('shares the same interpolated 3D edge between the fine sea and distant sea', () => {
+    const near = createSeaPatch(360, 96), far = createSeaPatch(1200, 60, 180, near.boundary);
+    const settings = { ...DEFAULT_SETTINGS, windSpeedKnots: 20, gusts: false, shifts: false };
+    near.update(0, 0, 7, settings); far.update(0, 0, 7, settings);
+    for (const axis of ['x', 'z'] as const) for (const side of [-1, 1]) {
+      const edge = (geometry: THREE.BufferGeometry) => {
+        const position = geometry.getAttribute('position'), points = new Map<number, number>();
+        for (let i = 0; i < position.count; i++) {
+          const across = axis === 'x' ? position.getX(i) : position.getZ(i), along = axis === 'x' ? position.getZ(i) : position.getX(i);
+          if (across === side * 180 && Math.abs(along) <= 180) points.set(along, position.getY(i));
+        }
+        return [...points].sort((a, b) => a[0] - b[0]);
+      };
+      const a = edge(near.mesh.geometry), b = edge(far.mesh.geometry);
+      const height = (points: number[][], x: number) => {
+        const right = points.findIndex(point => point[0] >= x);
+        if (right === 0) return points[0][1];
+        const [x0, y0] = points[right - 1], [x1, y1] = points[right];
+        return y0 + (y1 - y0) * (x - x0) / (x1 - x0);
+      };
+      for (let x = -180; x <= 180; x += .75) expect(height(a, x)).toBeCloseTo(height(b, x), 5);
+    }
+    near.dispose(); far.dispose();
+  });
+  it('skips frozen sea updates but invalidates on local wind changes', () => {
+    const patch = createSeaPatch(36, 18), settings = { ...DEFAULT_SETTINGS, windShadows: [{ position: { x: 0, z: 0 }, heading: 0 }] };
+    patch.update(0, 0, 1, settings);
+    const position = patch.mesh.geometry.getAttribute('position') as THREE.BufferAttribute, version = position.version;
+    patch.update(0, 0, 1, structuredClone(settings));
+    expect(position.version).toBe(version);
+    settings.windShadows[0].position.x = 8; patch.update(0, 0, 1, settings);
+    expect(position.version).toBeGreaterThan(version); patch.dispose();
+  });
+  it('keeps the optimized water normals equal to flat geometric face normals', () => {
+    const patch = createSeaPatch(36, 18); patch.update(60, -60, 9, DEFAULT_SETTINGS);
+    const reference = patch.mesh.geometry.clone(); reference.computeVertexNormals();
+    const actual = patch.mesh.geometry.getAttribute('normal'), expected = reference.getAttribute('normal');
+    for (let i = 0; i < actual.count; i++) {
+      expect(actual.getX(i)).toBeCloseTo(expected.getX(i), 6);
+      expect(actual.getY(i)).toBeCloseTo(expected.getY(i), 6);
+      expect(actual.getZ(i)).toBeCloseTo(expected.getZ(i), 6);
+    }
+    reference.dispose(); patch.dispose();
+  });
 });

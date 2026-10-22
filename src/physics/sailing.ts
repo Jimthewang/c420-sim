@@ -16,11 +16,13 @@ export function createBoatState(): BoatState {
     position: { x: 0, z: 0 }, velocity: { x: 0, z: 0 },
     heading: B.initialHeadingDeg * DEG_TO_RAD, yawRate: 0, time: 0,
     mainSheet: B.initialMainSheet, rudder: 0, main: { ...sail }, jib: { ...sail },
+    mainAngularVelocity: 0, jibAngularVelocity: 0, rigInitialized: false,
     heel: 0, rollRate: 0, centerboard: 1, jibSheet: B.initialMainSheet,
     capsized: false, rightingProgress: 0, planing: 0,
     crew: { skipperX: 0, crewX: 0, foreAft: 0, hike: 0 },
     tackCount: 0, gybeCount: 0, lastTackTime: -B.rollTackMinIntervalSeconds,
-    previousWindSide: 0, rollTackEnergy: 0,
+    previousWindSide: 0, maneuverReferenceHeading: B.initialHeadingDeg * DEG_TO_RAD,
+    rollTackPhase: 'idle', rollTackStartedAt: -B.rollTackMinIntervalSeconds, rollTackSide: 0,
   };
 }
 
@@ -43,7 +45,7 @@ export function sampleWind(x: number, z: number, time: number, settings: Sailing
   let shadow = 0;
   for (const source of settings.windShadows ?? []) {
     const dx = x - source.position.x; const dz = z - source.position.z;
-    if (Math.hypot(dx, dz) < E.windShadowIgnoreRadiusM) continue;
+    if (dx * dx + dz * dz < E.windShadowIgnoreRadiusM ** 2) continue;
     const distance = -dx * Math.sin(direction) + dz * Math.cos(direction);
     if (distance <= 0 || distance > E.windShadowLengthM) continue;
     const lateral = dx * Math.cos(direction) + dz * Math.sin(direction);
@@ -56,11 +58,16 @@ export function sampleWind(x: number, z: number, time: number, settings: Sailing
   return { velocity: { x: -Math.sin(direction) * speed, z: Math.cos(direction) * speed }, speed, direction, gust };
 }
 
-function sailForce(apparent: Vec2, relativeWind: number, opening: number, twist: number, area: number): { sail: SailState; force: Vec2 } {
+function sailForce(apparent: Vec2, relativeWind: number, opening: number, twist: number, area: number, actualAngle?: number): { sail: SailState; force: Vec2 } {
   const speed = Math.hypot(apparent.x, apparent.z);
-  const windSide = Math.sign(relativeWind) || 1;
   const actualOpening = Math.min(opening, Math.abs(relativeWind));
-  const attack = Math.abs(relativeWind) - Math.min(actualOpening + twist, Math.abs(relativeWind));
+  const angle = actualAngle ?? -(Math.sign(relativeWind) || 1) * actualOpening;
+  // Retain the lift/drag model, but measure incidence against the moving sail, including a backed sail during a crossing.
+  const signedAttack = wrap(relativeWind + angle);
+  const windSide = Math.sign(signedAttack) || 1;
+  // Near exactly reversed, parallel flow the effective cloth twist relaxes to zero; lift must cross zero at ±π.
+  const effectiveTwist = Math.min(twist, Math.PI - Math.abs(signedAttack));
+  const attack = Math.max(0, Math.abs(signedAttack) - effectiveTwist);
   const attackDeg = attack / DEG_TO_RAD;
   const luffing = attackDeg <= B.sailLuffAngleDeg || speed < B.velocityEpsilonMps;
   const stalled = attackDeg > B.sailStallAngleDeg;
@@ -76,12 +83,12 @@ function sailForce(apparent: Vec2, relativeWind: number, opening: number, twist:
   const lift = pressureArea * liftCoefficient;
   const drag = pressureArea * dragCoefficient;
   const inverseSpeed = speed > B.velocityEpsilonMps ? 1 / speed : 0;
-  // Lift is perpendicular to airflow; drag follows it. The windward side fixes lift sign.
+  // Lift is perpendicular to airflow; drag follows it. Signed incidence selects the lift side.
   const force = {
     x: (apparent.x * drag - apparent.z * lift * windSide) * inverseSpeed,
     z: (apparent.z * drag + apparent.x * lift * windSide) * inverseSpeed,
   };
-  return { sail: { angle: -windSide * actualOpening, angleOfAttack: attack, lift, drag,
+  return { sail: { angle, angleOfAttack: attack, lift, drag,
     status: luffing ? 'luffing' : stalled ? 'stalled' : 'drawing' }, force };
 }
 
@@ -112,8 +119,8 @@ function forces(state: BoatState, settings: SailingSettings) {
     ? clamp(Math.abs(relativeWind) / DEG_TO_RAD - B.jibTargetAttackDeg - B.jibEffectiveTwistDeg,
       B.minJibAngleDeg, B.maxJibAngleDeg) * DEG_TO_RAD
     : (B.maxJibAngleDeg - state.jibSheet * (B.maxJibAngleDeg - B.minJibAngleDeg)) * DEG_TO_RAD;
-  const main = sailForce(apparent, relativeWind, mainOpening, B.mainEffectiveTwistDeg * DEG_TO_RAD, B.mainAreaM2);
-  const jib = sailForce(apparent, relativeWind, jibOpening, B.jibEffectiveTwistDeg * DEG_TO_RAD, B.jibAreaM2);
+  const main = sailForce(apparent, relativeWind, mainOpening, B.mainEffectiveTwistDeg * DEG_TO_RAD, B.mainAreaM2, state.rigInitialized ? state.main.angle : undefined);
+  const jib = sailForce(apparent, relativeWind, jibOpening, B.jibEffectiveTwistDeg * DEG_TO_RAD, B.jibAreaM2, state.rigInitialized ? state.jib.angle : undefined);
   const airForce = { x: main.force.x + jib.force.x, z: main.force.z + jib.force.z };
   const trueWindAngle = wrap(wind.direction - state.heading);
   if ((settings.spinnaker ?? B.spinnakerEnabled) && Math.abs(trueWindAngle) > B.spinnakerMinAngleDeg * DEG_TO_RAD) {
@@ -166,6 +173,48 @@ function forces(state: BoatState, settings: SailingSettings) {
     drive: dot(airForce, f), side, hullDrag, heelingMoment, rightingMoment, trueWindAngle };
 }
 
+/** Preserve the actual trim and weight position when the user takes over from the automatic crew. */
+export function handoffToManualCrew(state: BoatState, settings: SailingSettings): { hike: number; jibSheet: number } {
+  // A GUI may already have changed the checkbox before this callback runs, including before the first tick.
+  const angle = Math.abs(forces(state, { ...settings, autoCrew: true }).jib.angle) / DEG_TO_RAD;
+  state.jibSheet = clamp((B.maxJibAngleDeg - angle) / (B.maxJibAngleDeg - B.minJibAngleDeg), 0, 1);
+  return { hike: state.crew.hike, jibSheet: state.jibSheet };
+}
+
+function updateRig(state: BoatState, settings: SailingSettings, h: number) {
+  const wind = sampleWind(state.position.x, state.position.z, state.time, settings);
+  const apparent = { x: wind.velocity.x - state.velocity.x, z: wind.velocity.z - state.velocity.z };
+  const relativeWind = wrap(Math.atan2(-apparent.x, apparent.z) - state.heading);
+  const mainOpening = (B.maxMainAngleDeg - state.mainSheet * (B.maxMainAngleDeg - B.minMainAngleDeg)) * DEG_TO_RAD;
+  const jibOpening = (settings.autoCrew !== false
+    ? clamp(Math.abs(relativeWind) / DEG_TO_RAD - B.jibTargetAttackDeg - B.jibEffectiveTwistDeg, B.minJibAngleDeg, B.maxJibAngleDeg)
+    : B.maxJibAngleDeg - state.jibSheet * (B.maxJibAngleDeg - B.minJibAngleDeg)) * DEG_TO_RAD;
+  const target = (opening: number) => -(Math.sign(relativeWind) || 1) * Math.min(opening, Math.abs(relativeWind));
+  if (!state.rigInitialized) {
+    state.main.angle = target(mainOpening); state.jib.angle = target(jibOpening);
+    state.rigInitialized = true;
+    return;
+  }
+  const move = (angle: number, velocity: number, desired: number, speed: number, acceleration: number) => {
+    const distance = desired - angle;
+    const response = B.rigAngularResponsePerSecond;
+    const angularAcceleration = clamp(response ** 2 * distance - 2 * response * velocity, -acceleration, acceleration);
+    const nextVelocity = clamp(velocity + angularAcceleration * h, -speed, speed);
+    return { angle: angle + nextVelocity * h, velocity: nextVelocity };
+  };
+  const oldMainAngle = state.main.angle;
+  const main = move(oldMainAngle, state.mainAngularVelocity, target(mainOpening),
+    B.mainMaxAngularSpeedDegPerSecond * DEG_TO_RAD, B.mainAngularAccelerationDegPerSecond2 * DEG_TO_RAD);
+  const jib = move(state.jib.angle, state.jibAngularVelocity, target(jibOpening),
+    B.jibMaxAngularSpeedDegPerSecond * DEG_TO_RAD, B.jibAngularAccelerationDegPerSecond2 * DEG_TO_RAD);
+  state.main.angle = main.angle; state.mainAngularVelocity = main.velocity;
+  state.jib.angle = jib.angle; state.jibAngularVelocity = jib.velocity;
+  if (oldMainAngle * main.angle < 0 && Math.abs(relativeWind) > Math.PI / 2) {
+    // The gybe's roll kick follows the actual boom crossing, rather than the earlier wind-side switch.
+    state.rollRate += Math.sign(main.angle) * B.gybeRollImpulse * (apparent.x ** 2 + apparent.z ** 2) * (1 - state.mainSheet);
+  }
+}
+
 function updateCrew(state: BoatState, controls: Controls, settings: SailingSettings, sideForce: number, trueAngle: number, h: number) {
   const maxLever = B.crewMaxLeverM + (B.trapezeEnabled ? B.trapezeExtraLeverM : 0);
   const windSide = Math.sign(trueAngle);
@@ -176,6 +225,13 @@ function updateCrew(state: BoatState, controls: Controls, settings: SailingSetti
         + Math.sign(sideForce) * B.hullRightingNm * Math.sin(B.crewTargetHeelDeg * DEG_TO_RAD))
           / (settings.crewWeightKg * B.gravityMps2), -maxLever, maxLever);
   }
+  if (state.rollTackPhase !== 'idle') {
+    const elapsed = state.time - state.rollTackStartedAt;
+    if (state.rollTackPhase === 'roll' && (elapsed >= B.rollTackHoldSeconds
+      || Math.abs(state.heel) >= B.rollTackMaxHeelDeg * DEG_TO_RAD)) state.rollTackPhase = 'flatten';
+    if (elapsed >= B.rollTackHoldSeconds + B.rollTackFlattenSeconds) state.rollTackPhase = 'idle';
+    else target = state.rollTackSide * (state.rollTackPhase === 'roll' ? -1 : 1) * maxLever * B.rollTackLeverShare;
+  }
   const response = 1 - Math.exp(-h / B.crewResponseSeconds);
   state.crew.skipperX += (target - state.crew.skipperX) * response;
   state.crew.crewX += (target - state.crew.crewX) * response;
@@ -185,23 +241,26 @@ function updateCrew(state: BoatState, controls: Controls, settings: SailingSetti
   state.crew.hike = (state.crew.skipperX + state.crew.crewX) / (2 * maxLever);
 }
 
-function updateManeuver(state: BoatState, controls: Controls, settings: SailingSettings, trueAngle: number, apparentSpeed: number) {
+function updateManeuver(state: BoatState, controls: Controls, settings: SailingSettings, trueAngle: number, forwardSpeed: number) {
   const side = Math.sign(Math.sin(trueAngle));
+  const headingChange = Math.abs(wrap(state.heading - state.maneuverReferenceHeading));
+  if (controls.rollTack && state.previousWindSide && side !== state.previousWindSide
+    && Math.abs(trueAngle) < B.rollTackTriggerAngleDeg * DEG_TO_RAD
+    && headingChange >= B.maneuverMinHeadingChangeDeg * DEG_TO_RAD
+    && forwardSpeed > B.rollTackMinSpeedMps && settings.windSpeedKnots <= B.rollTackMaxWindKnots
+    && state.time - state.rollTackStartedAt >= B.rollTackMinIntervalSeconds) {
+    state.rollTackPhase = 'roll'; state.rollTackStartedAt = state.time; state.rollTackSide = side;
+  }
   if (Math.abs(Math.sin(trueAngle)) < Math.sin(B.maneuverDeadbandDeg * DEG_TO_RAD)) return;
-  if (state.previousWindSide && side !== state.previousWindSide) {
+  if (state.previousWindSide && side !== state.previousWindSide
+    && headingChange >= B.maneuverMinHeadingChangeDeg * DEG_TO_RAD) {
     if (Math.abs(trueAngle) < Math.PI / 2) {
       state.tackCount++;
-      if (state.time - state.lastTackTime >= B.rollTackMinIntervalSeconds
-        && (controls.rollTack || settings.autoCrew !== false) && settings.windSpeedKnots <= B.rollTackMaxWindKnots) {
-        state.rollTackEnergy = settings.crewWeightKg * B.gravityMps2 * B.rollTackCrewDropM * B.rollTackEfficiency;
-      }
       state.lastTackTime = state.time;
-    } else {
-      state.gybeCount++;
-      state.rollRate -= side * B.gybeRollImpulse * apparentSpeed ** 2 * (1 - state.mainSheet);
-    }
+    } else state.gybeCount++;
   }
   state.previousWindSide = side;
+  state.maneuverReferenceHeading = state.heading;
 }
 
 /** Semi-implicit integration; velocity comes from summed forces, never a target-speed table. */
@@ -238,23 +297,16 @@ export function stepBoat(state: BoatState, controls: Controls, settings: Sailing
     }
     const rudderTarget = clamp(controls.steer, -1, 1) * B.rudderMaxAngleDeg * DEG_TO_RAD;
     state.rudder += (rudderTarget - state.rudder) * (1 - Math.exp(-h / B.rudderResponseSeconds));
+    updateRig(state, settings, h);
     const result = forces(state, settings);
+    updateManeuver(state, controls, settings, result.trueWindAngle, result.forwardSpeed);
     updateCrew(state, controls, settings, result.side, result.trueWindAngle, h);
-    updateManeuver(state, controls, settings, result.trueWindAngle, Math.hypot(result.apparent.x, result.apparent.z));
     const reach = clamp((Math.abs(result.trueWindAngle) / DEG_TO_RAD - B.planingMinAngleDeg)
       / (B.planingFullAngleDeg - B.planingMinAngleDeg), 0, 1);
     const froude = Math.max(0, result.forwardSpeed) / Math.sqrt(B.gravityMps2 * B.waterlineLengthM);
     const planingTarget = clamp((froude - B.planingStartFroude) / (B.planingFullFroude - B.planingStartFroude), 0, 1)
       * reach * Math.cos(state.heel) ** 2;
     state.planing += (planingTarget - state.planing) * (1 - Math.exp(-h / B.planingResponseSeconds));
-    if (state.time - state.lastTackTime > B.rollTackWindowSeconds) state.rollTackEnergy = 0;
-    if (state.rollTackEnergy > 0 && result.forwardSpeed > B.rollTackMinSpeedMps) {
-      const work = Math.min(state.rollTackEnergy, B.rollTackPowerWatts * h);
-      const drive = work / (result.forwardSpeed * h);
-      const f = forward(state.heading);
-      result.force.x += f.x * drive; result.force.z += f.z * drive;
-      state.rollTackEnergy -= work;
-    }
     state.velocity.x += result.force.x / mass * h;
     state.velocity.z += result.force.z / mass * h;
     state.position.x += state.velocity.x * h;

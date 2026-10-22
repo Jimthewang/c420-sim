@@ -3,7 +3,11 @@ import * as THREE from 'three';
 let gradient: THREE.Texture | undefined;
 let outlinesEnabled = true;
 const outlines = new Set<THREE.Mesh>();
-const shells = new WeakMap<THREE.Mesh, { shell: THREE.Mesh; thickness: number }>();
+interface DynamicShell {
+  groups: Uint32Array; corners: Uint32Array; normals: Float64Array; previous: Float32Array;
+  position: THREE.BufferAttribute; index: THREE.BufferAttribute | null; version: number;
+}
+const shells = new WeakMap<THREE.Mesh, { shell: THREE.Mesh; thickness: number; dynamic?: DynamicShell; pending?: boolean }>();
 
 /** Three discrete lighting bands, shared by every physical scene material. */
 function toonGradient() {
@@ -93,23 +97,75 @@ export function attachOutline(mesh: THREE.Mesh, thickness = .025): THREE.Mesh {
 export function updateOutline(mesh: THREE.Mesh) {
   const entry = shells.get(mesh);
   if (!entry) return;
-  const fresh = buildOutlineGeometry(mesh.geometry, entry.thickness);
-  const oldPosition = entry.shell.geometry.getAttribute('position');
-  const newPosition = fresh.getAttribute('position');
-  if (oldPosition.count === newPosition.count) {
-    (oldPosition.array as Float32Array).set(newPosition.array);
-    oldPosition.needsUpdate = true;
-    entry.shell.geometry.boundingSphere = fresh.boundingSphere;
-    fresh.dispose();
-  } else {
-    entry.shell.geometry.dispose(); entry.shell.geometry = fresh;
+  if (!outlinesEnabled) { entry.pending = true; return; }
+  entry.pending = false;
+  const position = mesh.geometry.getAttribute('position') as THREE.BufferAttribute;
+  const index = mesh.geometry.getIndex();
+  let dynamic = entry.dynamic;
+  if (!dynamic || dynamic.position !== position || dynamic.index !== index) {
+    // Empty sail buffers are populated on their first update; welding them now would merge every vertex.
+    let hasArea = false;
+    const count = index?.count ?? position.count;
+    for (let i = 0; i < count && !hasArea; i += 3) {
+      const a = index ? index.getX(i) : i, b = index ? index.getX(i + 1) : i + 1, c = index ? index.getX(i + 2) : i + 2;
+      const ux = position.getX(b) - position.getX(a), uy = position.getY(b) - position.getY(a), uz = position.getZ(b) - position.getZ(a);
+      const vx = position.getX(c) - position.getX(a), vy = position.getY(c) - position.getY(a), vz = position.getZ(c) - position.getZ(a);
+      hasArea = Math.hypot(uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx) > 1e-12;
+    }
+    if (!hasArea) return;
+    const welds = new Map<string, number>(), groups = new Uint32Array(position.count);
+    for (let i = 0; i < position.count; i++) {
+      const key = `${Math.round(position.getX(i) * 1e5)},${Math.round(position.getY(i) * 1e5)},${Math.round(position.getZ(i) * 1e5)}`;
+      if (!welds.has(key)) welds.set(key, welds.size);
+      groups[i] = welds.get(key)!;
+    }
+    const corners = new Uint32Array(count);
+    for (let i = 0; i < count; i++) corners[i] = index ? index.getX(i) : i;
+    dynamic = entry.dynamic = { groups, corners, normals: new Float64Array(welds.size * 3), previous: new Float32Array(position.count * 3).fill(NaN), position, index, version: -1 };
+    if (entry.shell.geometry.getAttribute('position').count !== count) {
+      entry.shell.geometry.dispose(); entry.shell.geometry = buildOutlineGeometry(mesh.geometry, entry.thickness);
+    }
   }
+  if (dynamic.version === position.version) return;
+  dynamic.version = position.version;
+  const { groups, corners, normals, previous } = dynamic;
+  let changed = false;
+  for (let i = 0; i < position.count; i++) {
+    const offset = i * 3, x = position.getX(i), y = position.getY(i), z = position.getZ(i);
+    if (previous[offset] !== x || previous[offset + 1] !== y || previous[offset + 2] !== z) changed = true;
+    previous[offset] = x; previous[offset + 1] = y; previous[offset + 2] = z;
+  }
+  if (!changed) return;
+  normals.fill(0);
+  for (let i = 0; i < corners.length; i += 3) {
+    const a = corners[i] * 3, b = corners[i + 1] * 3, c = corners[i + 2] * 3;
+    const ux = previous[b] - previous[a], uy = previous[b + 1] - previous[a + 1], uz = previous[b + 2] - previous[a + 2];
+    const vx = previous[c] - previous[a], vy = previous[c + 1] - previous[a + 1], vz = previous[c + 2] - previous[a + 2];
+    const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+    for (let corner = 0; corner < 3; corner++) {
+      const group = groups[corners[i + corner]] * 3; normals[group] += nx; normals[group + 1] += ny; normals[group + 2] += nz;
+    }
+  }
+  for (let i = 0; i < normals.length; i += 3) {
+    const length = Math.hypot(normals[i], normals[i + 1], normals[i + 2]) || 1;
+    normals[i] /= length; normals[i + 1] /= length; normals[i + 2] /= length;
+  }
+  const target = entry.shell.geometry.getAttribute('position') as THREE.BufferAttribute;
+  for (let i = 0; i < corners.length; i++) {
+    const vertex = corners[i], offset = vertex * 3, group = groups[vertex] * 3;
+    target.setXYZ(i, previous[offset] + normals[group] * entry.thickness, previous[offset + 1] + normals[group + 1] * entry.thickness, previous[offset + 2] + normals[group + 2] * entry.thickness);
+  }
+  target.needsUpdate = true;
+  entry.shell.geometry.computeBoundingSphere();
 }
 
 export function setOutlinesEnabled(enabled: boolean) {
   if (enabled === outlinesEnabled) return;
   outlinesEnabled = enabled;
-  for (const shell of outlines) shell.visible = enabled;
+  for (const shell of outlines) {
+    shell.visible = enabled;
+    if (enabled && shell.parent instanceof THREE.Mesh && shells.get(shell.parent)?.pending) updateOutline(shell.parent);
+  }
 }
 
 /** Call before disposing a scene subtree to release the visibility registry. */

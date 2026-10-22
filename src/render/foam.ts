@@ -18,9 +18,9 @@ export function createFoamSystem() {
   spray.count = shore.count = 0;
   object.add(spray, shore);
   const particles: Particle[] = [];
-  const emission = new WeakMap<BoatState, { credit: number; tack: number }>();
+  let emission = new WeakMap<BoatState, { credit: number; tack: number; time: number }>();
   const transform = new THREE.Object3D(), wave = { height: 0, normal: new THREE.Vector3() };
-  let shoreline: Vec2[] = [], seed = 19;
+  let shoreline: Vec2[] = [], seed = 19, lastInputs: number[] = [];
   const random = () => { seed = Math.imul(seed, 1664525) + 1013904223 | 0; return (seed >>> 0) / 4294967296; };
 
   function emit(boat: BoatState, bow: boolean, burst = false) {
@@ -44,16 +44,24 @@ export function createFoamSystem() {
     const stride = Math.max(1, Math.ceil(points.length / shorelineCapacity));
     shoreline = points.filter((_, index) => index % stride === 0).slice(0, shorelineCapacity);
     shore.count = shoreline.length;
+    lastInputs = [];
   }
 
   function update(boats: BoatState[], time: number, dt: number, settings: SailingSettings) {
+    const inputs = [time, settings.windSpeedKnots, settings.windDirectionDeg, Number(settings.gusts), Number(settings.shifts)];
+    for (const boat of boats) inputs.push(boat.time);
+    for (const shadow of settings.windShadows ?? []) inputs.push(shadow.position.x, shadow.position.z);
+    if (inputs.length === lastInputs.length && inputs.every((value, index) => value === lastInputs[index])) return;
+    lastInputs = inputs;
     for (const boat of boats) {
       let previous = emission.get(boat);
-      if (!previous) { previous = { credit: 0, tack: boat.tackCount }; emission.set(boat, previous); }
+      if (!previous) { previous = { credit: 0, tack: boat.tackCount, time: boat.time }; emission.set(boat, previous); }
+      const advance = Math.max(0, Math.min(dt, boat.time - previous.time, 0.1));
+      previous.time = boat.time;
       const speed = Math.hypot(boat.velocity.x, boat.velocity.z);
-      previous.credit += Math.max(0, Math.min(dt, 0.1)) * (speed > 0.4 ? 3 + speed * 4 + boat.planing * 8 : 0);
+      previous.credit += advance * (speed > 0.4 ? 3 + speed * 4 + boat.planing * 8 : 0);
       while (previous.credit >= 1) { emit(boat, random() < 0.45); previous.credit--; }
-      if (boat.tackCount !== previous.tack && speed > 0.6) for (let i = 0; i < 14; i++) emit(boat, i % 2 === 0, true);
+      if (advance > 0 && boat.tackCount !== previous.tack && speed > 0.6) for (let i = 0; i < 14; i++) emit(boat, i % 2 === 0, true);
       previous.tack = boat.tackCount;
     }
     let count = 0;
@@ -82,7 +90,7 @@ export function createFoamSystem() {
     shore.instanceMatrix.needsUpdate = true;
   }
 
-  function reset() { particles.length = 0; spray.count = 0; }
+  function reset() { particles.length = 0; spray.count = 0; emission = new WeakMap(); lastInputs = []; }
   function dispose() { geometry.dispose(); material.dispose(); object.removeFromParent(); }
   return { object, setShoreline, update, reset, dispose };
 }

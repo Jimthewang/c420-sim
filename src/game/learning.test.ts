@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { createLesson, updateLesson } from './tutorial';
 import { addSeriesRace, loadRecords, saveBest, saveRecords } from './records';
+import { createBoatState, getTelemetry, stepBoat } from '../physics/sailing';
+import { DEFAULT_SETTINGS } from '../config/environment';
 
 const sailing = { dt: 1, speed: 3, windAngle: 90, vmg: 0, steered: false, trimmed: false, tackCount: 0, gybeCount: 0, roundings: 0, legallyStarted: false };
 describe('interactive lessons', () => {
@@ -25,6 +27,22 @@ describe('interactive lessons', () => {
     expect(lesson.passed).toBe(false);
     updateLesson(lesson,{...sailing,tackCount:1,speed:2.5});
     expect(lesson.passed).toBe(true);
+  });
+  it('passes the tack lesson from a real helm-driven crossing and recovered sailing speed', () => {
+    const lesson = createLesson(2), boat = createBoatState();
+    const settings = { ...DEFAULT_SETTINGS, gusts: false, shifts: false };
+    boat.heading = Math.PI / 4; boat.velocity = { x: 1.5, z: -1.5 };
+    for (let t = 0; t < 45 && !lesson.passed; t += 1 / 120) {
+      const error = Math.atan2(Math.sin(-Math.PI / 4 - boat.heading), Math.cos(-Math.PI / 4 - boat.heading));
+      const steer = t < 3 ? -1 : error * 2 - boat.yawRate * .8;
+      stepBoat(boat, { steer, mainSheet: 1, rollTack: true }, settings, 1 / 120);
+      const telemetry = getTelemetry(boat, settings);
+      updateLesson(lesson, { ...sailing, dt: 1 / 120, speed: telemetry.speedKnots,
+        windAngle: telemetry.trueWindAngleDeg, steered: true, tackCount: boat.tackCount });
+    }
+    expect(lesson.passed).toBe(true);
+    expect(boat.tackCount).toBe(1);
+    expect(getTelemetry(boat, settings).trueWindAngleDeg).toBeGreaterThan(20);
   });
   it('needs an actual gybe, valid rounding, and legal start for their lessons', () => {
     for(const index of [3,4,5]) {

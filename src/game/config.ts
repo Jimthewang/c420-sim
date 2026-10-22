@@ -31,6 +31,9 @@ export const RACE_CONFIG = {
   aiObstacleClearanceM: 2, // Extra navigation room beyond hull and course-object collision radii.
   aiBackingThresholdMps: 0.05, // Reverse tiller action when actual water flow through the rudder is astern.
   aiRecoveryTrimAngleDeg: 38, // First ease completely, then trim once backed onto this angle on the new tack.
+  aiRecoveryRetryAngleDeg: 32, // If a failed trim falls this far back into no-go, ease and retry on the opposite tack.
+  aiRecoveryStallRateDegPerSecond: .5, // A backed escape turning more slowly than this may have lost effective rudder flow.
+  aiRecoveryStallSeconds: 5, // Require sustained lack of rotation before trying the other escape tack.
   aiRecoveryExitAngleDeg: 48, // Resume navigation only once the recovered boat is outside the no-go zone.
   aiRecoveryNoGoDeg: 40, // A backed-down hull inside this wind angle needs a deliberate escape tack.
   aiRecoverySpeedMps: 0.4, // Resume normal navigation only after the recovery has restored forward rudder flow.

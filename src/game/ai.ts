@@ -6,7 +6,7 @@ import { courseCoordinates, coursePoint, getNavigationTarget, requestPenaltyTurn
 import type { Racer, RaceState } from './race';
 import { RACE_CONFIG as C } from './config';
 
-interface Pilot { tack: number; loiterSide: number; tackHold: number; recoverySide:number; recoveryTrim:boolean; loiterGybe:boolean }
+interface Pilot { tack: number; loiterSide: number; tackHold: number; recoverySide:number; recoveryTrim:boolean; recoveryStalled:number; loiterGybe:boolean }
 const pilots = new WeakMap<Racer, Pilot>();
 const wrap = (angle: number) => Math.atan2(Math.sin(angle), Math.cos(angle));
 const clamp = (value: number, low: number, high: number) => Math.max(low, Math.min(high, value));
@@ -19,7 +19,7 @@ export function aiControls(racer: Racer, race: RaceState, settings: SailingSetti
   const telemetry = getTelemetry(state, settings);
   let pilot = pilots.get(racer);
   if (!pilot) {
-    pilot = { tack: Math.sign(wrap(state.heading - wind.direction)) || 1, loiterSide: 1, tackHold: 0, recoverySide:0, recoveryTrim:false, loiterGybe:false };
+    pilot = { tack: Math.sign(wrap(state.heading - wind.direction)) || 1, loiterSide: 1, tackHold: 0, recoverySide:0, recoveryTrim:false, recoveryStalled:0, loiterGybe:false };
     pilots.set(racer, pilot);
   }
   pilot.tackHold = Math.max(0, pilot.tackHold - dt);
@@ -30,6 +30,14 @@ export function aiControls(racer: Racer, race: RaceState, settings: SailingSetti
     pilot.recoverySide=-(Math.sign(windAngle)||pilot.tack);pilot.recoveryTrim=false;
   }
   if(pilot.recoverySide){
+    const stalled=windAngle*pilot.recoverySide>0 && forwardSpeed < -C.aiBackingThresholdMps
+      && Math.abs(state.yawRate)<C.aiRecoveryStallRateDegPerSecond*DEG_TO_RAD;
+    pilot.recoveryStalled=stalled?pilot.recoveryStalled+dt:0;
+    if((pilot.recoveryTrim && windAngle*pilot.recoverySide<C.aiRecoveryRetryAngleDeg && forwardSpeed < -C.aiBackingThresholdMps)
+      || pilot.recoveryStalled>=C.aiRecoveryStallSeconds){
+      // A shift can beat the finite sheet take-up. Depower and back across again instead of remaining sheeted in forever.
+      pilot.recoverySide=-(Math.sign(windAngle)||pilot.recoverySide);pilot.recoveryTrim=false;pilot.recoveryStalled=0;
+    }
     const recoveryAngle=windAngle*pilot.recoverySide;
     if(recoveryAngle>C.aiRecoveryTrimAngleDeg)pilot.recoveryTrim=true;
     if(recoveryAngle>C.aiRecoveryExitAngleDeg && forwardSpeed>C.aiRecoverySpeedMps){

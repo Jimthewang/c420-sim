@@ -30,7 +30,8 @@ describe('heel, board and crew', () => {
     const state = createBoatState(); state.velocity.x = 2;
     run(state, 0.1, { steer: 0, mainSheet: 0.65, jibSheet: 0 }, { ...steady, autoCrew: false });
     expect(state.jib.status).toBe('luffing');
-    run(state, 0.1, { steer: 0, mainSheet: 0.65, jibSheet: 1 }, { ...steady, autoCrew: false });
+    // Finite sheet take-up replaces the former instantaneous full-travel trim change.
+    run(state, 1, { steer: 0, mainSheet: 0.65, jibSheet: 1 }, { ...steady, autoCrew: false });
     expect(state.jib.status).toBe('stalled');
   });
   it('capsizes when strong wind overpowers crew on the wrong side', () => {
@@ -70,26 +71,25 @@ describe('planing and maneuvers', () => {
       expect(getTelemetry(state, settings).speedKnots).toBeLessThan(12.5);
     }
   });
-  it('counts real wind crossings as a tack and bounds roll-tack energy by crew work', () => {
-    const state = createBoatState(); state.heading = 0.12; state.velocity = { x: 0.25, z: -2 };
-    run(state, 0.1, { steer: 0, mainSheet: 1, rollTack: true });
-    state.heading = -0.12;
-    run(state, 0.1, { steer: 0, mainSheet: 1, rollTack: true });
+  it('turns through the wind and completes a real crew roll and flatten', () => {
+    const state = createBoatState(); state.heading = Math.PI / 4; state.velocity = { x: 1.5, z: -1.5 };
+    const phases = new Set<string>(); let greatestCrewLever = 0;
+    for (let t = 0; t < 8; t += 1 / 120) {
+      stepBoat(state, { steer: t < 3 ? -1 : 0, mainSheet: 1, rollTack: true }, steady, 1 / 120);
+      phases.add(state.rollTackPhase);
+      greatestCrewLever = Math.max(greatestCrewLever, Math.abs(state.crew.crewX));
+    }
     expect(state.tackCount).toBe(1);
-    expect(state.rollTackEnergy).toBeGreaterThan(0);
-    expect(state.rollTackEnergy).toBeLessThanOrEqual(steady.crewWeightKg * B.gravityMps2 * B.rollTackCrewDropM * B.rollTackEfficiency);
+    expect(phases).toEqual(new Set(['idle', 'roll', 'flatten']));
+    expect(state.rollTackPhase).toBe('idle');
+    expect(greatestCrewLever).toBeLessThanOrEqual(B.crewMaxLeverM);
   });
-  it('gets a bounded exit benefit from correctly timed rolling compared with a flat tack', () => {
+  it('does not gain propulsion from holding Space without turning through the wind', () => {
     const flat = createBoatState(); const rolled = createBoatState();
-    for (const state of [flat, rolled]) { state.heading = 0.12; state.velocity = { x: 0.25, z: -2 }; }
     const manual = { ...steady, autoCrew: false };
-    run(flat, 0.1, { steer: 0, mainSheet: 1 }, manual);
-    run(rolled, 0.1, { steer: 0, mainSheet: 1, rollTack: true }, manual);
-    flat.heading = rolled.heading = -0.75;
-    run(flat, 3, { steer: 0, mainSheet: 1, hike: 0.3 }, manual);
-    run(rolled, 3, { steer: 0, mainSheet: 1, hike: 0.3, rollTack: true }, manual);
-    expect(getTelemetry(rolled, manual).speedKnots).toBeGreaterThan(getTelemetry(flat, manual).speedKnots);
-    expect(getTelemetry(rolled, manual).speedKnots - getTelemetry(flat, manual).speedKnots).toBeLessThan(0.8);
+    run(flat, 3, { steer: 0, mainSheet: .65, hike: -.3 }, manual);
+    run(rolled, 3, { steer: 0, mainSheet: .65, hike: -.3, rollTack: true }, manual);
+    expect(rolled).toEqual(flat);
   });
   it('adds optional spinnaker propulsion on a run', () => {
     const state = createBoatState(); state.heading = Math.PI;
@@ -97,17 +97,21 @@ describe('planing and maneuvers', () => {
     expect(getTelemetry(state, { ...steady, spinnaker: true }).driveForce).toBeGreaterThan(plain + 50);
   });
   it('an uncontrolled strong-wind gybe adds more roll impulse than a sheeted-in crossing', () => {
-    const loose = createBoatState(); const controlled = createBoatState();
-    const settings = { ...steady, windSpeedKnots: 20, autoCrew: false };
-    for (const state of [loose, controlled]) {
-      state.heading = 170 * Math.PI / 180;
-      run(state, 1 / 120, { steer: 0, mainSheet: 0.1 }, settings);
-      state.heading = 190 * Math.PI / 180;
-    }
-    run(loose, 1 / 120, { steer: 0, mainSheet: 0.1 }, settings);
-    run(controlled, 1 / 120, { steer: 0, mainSheet: 1 }, settings);
-    expect(loose.gybeCount).toBe(1);
-    expect(Math.abs(loose.rollRate)).toBeGreaterThan(Math.abs(controlled.rollRate) + 0.3);
+    const settings = { ...steady, windSpeedKnots: 20 };
+    const kicks = [0.1, 1].map(mainSheet => {
+      const state = createBoatState(); state.heading = 150 * Math.PI / 180;
+      state.velocity = { x: 1, z: 1.73 };
+      let largestKick = 0;
+      for (let t = 0; t < 5; t += 1 / 120) {
+        const before = getTelemetry(state, settings);
+        const predictedRate = state.rollRate + (before.heelingMoment - before.rightingMoment - B.rollDampingNmSeconds * state.rollRate) / B.rollInertiaKgM2 / 120;
+        stepBoat(state, { steer: 1, mainSheet }, settings, 1 / 120);
+        largestKick = Math.max(largestKick, Math.abs(state.rollRate - predictedRate));
+      }
+      expect(state.gybeCount).toBe(1);
+      return largestKick;
+    });
+    expect(kicks[0]).toBeGreaterThan(kicks[1] + .3);
   });
 });
 

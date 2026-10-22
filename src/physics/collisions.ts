@@ -110,7 +110,6 @@ function projectTerrain(state:BoatState,motion:Vec2,wind:CollisionWind=defaultWi
   for(let iteration=0;iteration<E.terrainResolveIterations;iteration++){
     const contact=terrainContact(state,wind);
     if(contact.penetration<=-E.collisionSkinM)break;
-    hit=true;
     let gradient=getTerrainGradient(contact.point.x,contact.point.z),slope=Math.hypot(gradient.x,gradient.z);
     if(slope<1e-5){
       // A reset should protect occupied water; this radial exit also handles an externally placed hull at a summit.
@@ -120,9 +119,13 @@ function projectTerrain(state:BoatState,motion:Vec2,wind:CollisionWind=defaultWi
     }
     const normal={x:-gradient.x/slope,z:-gradient.z/slope};
     const correction=Math.min(E.terrainMaxCorrectionM,(contact.penetration+E.collisionSkinM)/slope);
+    const previousX=state.position.x,previousZ=state.position.z;
     state.position.x+=normal.x*correction;state.position.z+=normal.z*correction;
     wallImpulse(state.velocity,normal,E.terrainFriction);
     wallImpulse(motion,normal,E.terrainFriction);
+    // At the skin boundary, roundoff can request a correction too small to change either coordinate.
+    if(state.position.x===previousX && state.position.z===previousZ)break;
+    hit=true;
   }
   return hit;
 }

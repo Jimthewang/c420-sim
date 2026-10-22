@@ -54,7 +54,8 @@ describe('sail trim and symmetry', () => {
     state.velocity = { x: 2, z: 0 };
     stepBoat(state, { steer: 0, mainSheet: 0 }, steady, 1 / 60);
     expect(state.main.status).toBe('luffing');
-    stepBoat(state, { steer: 0, mainSheet: 1 }, steady, 1 / 60);
+    // The sheet command now pulls a moving boom in; allow that physical travel before checking stall.
+    for (let i = 0; i < 120; i++) stepBoat(state, { steer: 0, mainSheet: 1 }, steady, 1 / 120);
     expect(state.main.status).toBe('stalled');
   });
 

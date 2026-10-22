@@ -20,6 +20,10 @@ export interface BoatState {
   rudder: number;
   main: SailState;
   jib: SailState;
+  /** Actual rig angular speeds, in radians per second, shared with crew anticipation. */
+  mainAngularVelocity: number;
+  jibAngularVelocity: number;
+  rigInitialized: boolean;
   heel: number;
   rollRate: number;
   centerboard: number;
@@ -34,7 +38,10 @@ export interface BoatState {
   lastTackTime: number;
   /** Internal maneuver bookkeeping; callers need not change these. */
   previousWindSide: number;
-  rollTackEnergy: number;
+  maneuverReferenceHeading: number;
+  rollTackPhase: 'idle' | 'roll' | 'flatten';
+  rollTackStartedAt: number;
+  rollTackSide: number;
 }
 
 export interface Controls {

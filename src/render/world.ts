@@ -9,41 +9,107 @@ import { boatMarker, createCourseScene, disposeObject } from './course';
 import { createFoamSystem } from './foam';
 import { createTerrainScene } from './terrain';
 import { attachOutline, disposeOutlines, setOutlinesEnabled, toonMaterial } from './toon';
-import { sampleWave } from './waves';
+import { prepareWaveHeightSampler } from '../world/waves';
 import type { GraphicsQuality, RenderCourse, RenderExtras } from './types';
 
+interface SeaBoundary {
+  segments: number; readonly version: number;
+  sample(x: number, z: number, out: { height: number; tint: number }): void;
+}
+
 /** Indexed sampling keeps wave evaluation cheap; the rendered surface has independent flat faces. */
-export function createSeaPatch(span: number, segments: number, hole = 0) {
+export function createSeaPatch(span: number, segments: number, hole = 0, innerBoundary?: SeaBoundary) {
   const indexed = new THREE.PlaneGeometry(span, span, segments, segments).rotateX(-Math.PI / 2);
   if (hole) {
     const indices = indexed.index!.array, points = indexed.attributes.position, kept: number[] = [];
-    for (let i = 0; i < indices.length; i += 3) {
-      const x = (points.getX(indices[i]) + points.getX(indices[i + 1]) + points.getX(indices[i + 2])) / 3;
-      const z = (points.getZ(indices[i]) + points.getZ(indices[i + 1]) + points.getZ(indices[i + 2])) / 3;
-      if (Math.abs(x) >= hole || Math.abs(z) >= hole) kept.push(indices[i], indices[i + 1], indices[i + 2]);
+    const vertices = Array.from(points.array), lookup = new Map<string, number>();
+    const add = (x: number, z: number) => {
+      const key = `${x.toFixed(6)},${z.toFixed(6)}`;
+      if (!lookup.has(key)) { lookup.set(key, vertices.length / 3); vertices.push(x, 0, z); }
+      return lookup.get(key)!;
+    };
+    for (let i = 0; i < points.count; i++) lookup.set(`${points.getX(i).toFixed(6)},${points.getZ(i).toFixed(6)}`, i);
+    for (let i = 0; i < indices.length; i += 6) {
+      const quad = [indices[i], indices[i + 1], indices[i + 4], indices[i + 2]];
+      const cx = quad.reduce((sum, vertex) => sum + points.getX(vertex), 0) / 4;
+      const cz = quad.reduce((sum, vertex) => sum + points.getZ(vertex), 0) / 4;
+      if (Math.abs(cx) < hole && Math.abs(cz) < hole) continue;
+      const polygon: number[] = [];
+      for (let edge = 0; edge < 4; edge++) {
+        const a = quad[edge], b = quad[(edge + 1) % 4]; polygon.push(a);
+        if (!innerBoundary) continue;
+        const ax = points.getX(a), az = points.getZ(a), bx = points.getX(b), bz = points.getZ(b);
+        const vertical = ax === bx && Math.abs(ax) === hole && Math.max(Math.abs(az), Math.abs(bz)) <= hole;
+        const horizontal = az === bz && Math.abs(az) === hole && Math.max(Math.abs(ax), Math.abs(bx)) <= hole;
+        if (!vertical && !horizontal) continue;
+        const from = vertical ? az : ax, to = vertical ? bz : bx, step = hole * 2 / innerBoundary.segments;
+        const splits: number[] = [];
+        for (let knot = 1; knot < innerBoundary.segments; knot++) {
+          const along = -hole + knot * step;
+          if (along > Math.min(from, to) + 1e-6 && along < Math.max(from, to) - 1e-6) splits.push(along);
+        }
+        if (to < from) splits.reverse();
+        for (const along of splits) polygon.push(add(vertical ? ax : along, vertical ? along : az));
+      }
+      if (polygon.length === 4) kept.push(...Array.from(indices.slice(i, i + 6)));
+      else {
+        // Only the single row around the hole needs extra triangles to share the fine mesh's edge knots.
+        const center = add(cx, cz);
+        for (let edge = 0; edge < polygon.length; edge++) kept.push(center, polygon[edge], polygon[(edge + 1) % polygon.length]);
+      }
     }
+    indexed.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+    indexed.deleteAttribute('normal'); indexed.deleteAttribute('uv');
     indexed.setIndex(kept);
   }
   const source = indexed.attributes.position.array.slice() as Float32Array;
   const indices = new Uint32Array(indexed.index!.array);
   const geometry = indexed.toNonIndexed(); indexed.dispose();
+  geometry.computeVertexNormals();
   const colors = new Float32Array(geometry.attributes.position.count * 3);
   const tints = new Float32Array(source.length / 3);
   geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
   (geometry.attributes.position as THREE.BufferAttribute).setUsage(THREE.DynamicDrawUsage);
+  (geometry.attributes.normal as THREE.BufferAttribute).setUsage(THREE.DynamicDrawUsage);
+  (geometry.attributes.color as THREE.BufferAttribute).setUsage(THREE.DynamicDrawUsage);
   const mesh = new THREE.Mesh(geometry, toonMaterial(0x2bc4ff, { vertexColors: true, transparent: true, opacity: 0.94, depthWrite: true }));
   mesh.receiveShadow = true; mesh.frustumCulled = false;
   mesh.renderOrder = hole ? 1 : 2;
-  const heights = new Float32Array(source.length / 3), wave = { height: 0, normal: new THREE.Vector3() };
+  const heights = new Float32Array(source.length / 3), used = new Uint8Array(heights.length), edgeSample = { height: 0, tint: 1 };
+  for (const vertex of indices) used[vertex] = 1;
+  let lastInputs: number[] = [], version = 0;
+  const boundary: SeaBoundary = {
+    segments, get version() { return version; },
+    sample(x, z, out) {
+      const column = Math.max(0, Math.min(segments, (x / span + .5) * segments));
+      const row = Math.max(0, Math.min(segments, (z / span + .5) * segments));
+      const x0 = Math.floor(column), z0 = Math.floor(row), x1 = Math.min(segments, x0 + 1), z1 = Math.min(segments, z0 + 1);
+      const u = column - x0, v = row - z0;
+      const value = (values: Float32Array) => (values[z0 * (segments + 1) + x0] * (1 - u) + values[z0 * (segments + 1) + x1] * u) * (1 - v)
+        + (values[z1 * (segments + 1) + x0] * (1 - u) + values[z1 * (segments + 1) + x1] * u) * v;
+      out.height = value(heights); out.tint = value(tints);
+    },
+  };
   function update(x: number, z: number, time: number, settings: SailingSettings) {
+    const inputs = [x, z, time, settings.windSpeedKnots, settings.windDirectionDeg, Number(settings.gusts), Number(settings.shifts), innerBoundary?.version ?? 0];
+    for (const shadow of settings.windShadows ?? []) inputs.push(shadow.position.x, shadow.position.z);
+    if (inputs.length === lastInputs.length && inputs.every((value, index) => value === lastInputs[index])) return;
+    lastInputs = inputs; version++;
     mesh.position.set(x, 0, z);
+    // Direction is spatially uniform; gusts and boat shadows still supply each vertex's exact local speed.
+    const heightAt = prepareWaveHeightSampler(time, sampleWind(x, z, time, settings).direction);
     for (let vertex = 0; vertex < heights.length; vertex++) {
+      if (!used[vertex]) continue;
       const worldX = source[vertex * 3] + x, worldZ = source[vertex * 3 + 2] + z;
+      const localX = source[vertex * 3], localZ = source[vertex * 3 + 2];
+      if (innerBoundary && (Math.abs(localX) === hole && Math.abs(localZ) <= hole || Math.abs(localZ) === hole && Math.abs(localX) <= hole)) {
+        innerBoundary.sample(localX, localZ, edgeSample); heights[vertex] = edgeSample.height; tints[vertex] = edgeSample.tint; continue;
+      }
       const wind = sampleWind(worldX, worldZ, time, settings);
-      sampleWave(worldX, worldZ, time, wind.speed / KNOTS_TO_MPS, wind.direction, wave);
-      heights[vertex] = wave.height;
+      const height = heightAt(worldX, worldZ, wind.speed / KNOTS_TO_MPS);
+      heights[vertex] = height;
       const puff = settings.gusts ? 1 - Math.max(0, wind.gust) * 0.7 : 1;
-      tints[vertex] = puff * (0.98 + Math.max(-0.54, Math.min(0.54, wave.height)) * 0.035);
+      tints[vertex] = puff * (0.98 + Math.max(-0.54, Math.min(0.54, height)) * 0.035);
     }
     const positions = geometry.attributes.position.array as Float32Array;
     for (let vertex = 0; vertex < indices.length; vertex++) {
@@ -52,10 +118,19 @@ export function createSeaPatch(span: number, segments: number, hole = 0) {
       // Shared vertices receive the same tint; interpolation avoids sawtooth wind-puff edges.
       colors[offset] = colors[offset + 1] = colors[offset + 2] = tints[sourceIndex];
     }
-    geometry.attributes.position.needsUpdate = true; geometry.computeVertexNormals();
+    // Nonindexed flat faces share one normal: normalize once per triangle, not once per duplicate vertex.
+    const normals = geometry.attributes.normal.array as Float32Array;
+    for (let face = 0; face < positions.length; face += 9) {
+      const ux = positions[face + 3] - positions[face], uy = positions[face + 4] - positions[face + 1], uz = positions[face + 5] - positions[face + 2];
+      const vx = positions[face + 6] - positions[face], vy = positions[face + 7] - positions[face + 1], vz = positions[face + 8] - positions[face + 2];
+      const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+      const length = Math.sqrt(nx * nx + ny * ny + nz * nz) || 1;
+      for (let corner = 0; corner < 9; corner += 3) { normals[face + corner] = nx / length; normals[face + corner + 1] = ny / length; normals[face + corner + 2] = nz / length; }
+    }
+    geometry.attributes.position.needsUpdate = true; geometry.attributes.normal.needsUpdate = true;
     geometry.attributes.color.needsUpdate = true;
   }
-  return { mesh, update, dispose() { geometry.dispose(); mesh.material.dispose(); mesh.removeFromParent(); } };
+  return { mesh, boundary, update, dispose() { geometry.dispose(); mesh.material.dispose(); mesh.removeFromParent(); } };
 }
 
 export function createWorld(canvas: HTMLCanvasElement) {
@@ -74,7 +149,7 @@ export function createWorld(canvas: HTMLCanvasElement) {
   sunlight.shadow.camera.near = 1; sunlight.shadow.camera.far = 260;
   sunlight.shadow.bias = -0.00035; sunlight.shadow.normalBias = 0.06;
   scene.add(sunlight, sunlight.target);
-  let nearSea = createSeaPatch(360, 96), farSea = createSeaPatch(1200, 60, 180);
+  let nearSea = createSeaPatch(360, 96), farSea = createSeaPatch(1200, 60, 180, nearSea.boundary);
   const horizon = new THREE.Mesh(new THREE.PlaneGeometry(12000, 12000).rotateX(-Math.PI / 2), toonMaterial(0x2bc4ff));
   horizon.position.y = -0.6; horizon.receiveShadow = false;
   scene.add(horizon, farSea.mesh, nearSea.mesh);
@@ -129,7 +204,7 @@ export function createWorld(canvas: HTMLCanvasElement) {
     renderer.shadowMap.enabled = next !== 'low'; renderer.shadowMap.needsUpdate = true;
     nearSea.dispose(); farSea.dispose();
     nearSea = createSeaPatch(360, next === 'low' ? 72 : next === 'medium' ? 96 : 144);
-    farSea = createSeaPatch(1200, next === 'high' ? 100 : 60, 180);
+    farSea = createSeaPatch(1200, next === 'high' ? 100 : 60, 180, nearSea.boundary);
     scene.add(farSea.mesh, nearSea.mesh); resize();
   }
 

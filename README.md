@@ -62,7 +62,7 @@ The six lessons cover reaching, the no-go zone, tacking, gybing, rounding a mark
 | Esc | Pause / resume; close settings |
 | R | Restart the current session; after results, start a fresh race or series |
 
-The crew trims the jib and balances weight automatically by default. Turn off **Automatic crew** under **G** to use J/L and Q/E. **Hiking** means moving body weight outward to balance the sail force. Crew weight and position affect heel, drag, and roll-tack performance.
+The crew trims the jib and balances weight automatically by default. Turning automatic crew off preserves the current jib trim and hiking position so taking over does not suddenly unbalance the boat. Turn off **Automatic crew** under **G** to use J/L and Q/E. **Hiking** means moving body weight outward to balance the sail force. Crew weight and position affect heel, drag, and roll-tack performance. Hold **Space** through a moving, light-to-moderate-air tack to request a coordinated roll and flatten in either crew mode. This moves the crew through the existing balance model; it does not award a forward speed boost.
 
 **Heel** is the boat leaning sideways. If you capsize in intermediate or realistic mode, hold **S** until the main is fully eased, hold **X** until the board is fully down, then hold **F** for the recovery progress to finish. Beginner supplies those same actions automatically. **Planing** means the hull lifts and skims over the water at higher speed.
 
@@ -82,13 +82,17 @@ Sound begins after an interaction. Wind, hull wash, planing hiss, sail flutter, 
 
 ## Check and tune realism
 
-**F3** shows true and apparent wind, sail angle of attack, heel, leeway, upwind VMG, heeling/righting moments, forces, planing, and wind shadow.
+The regular HUD now shows **AWA** (apparent wind angle and side), apparent wind speed, signed **upwind VMG**, and actual helm deflection. Use VMG to judge progress upwind and center the helm after a turn to reduce steering drag.
+
+**F3** shows frame rate, true and apparent wind, sail angle of attack, heel, leeway, upwind VMG, heeling/righting moments, forces, planing, and wind shadow.
 
 - **Apparent wind:** the breeze felt by the moving boat, after subtracting its velocity from true wind.
 - **Angle of attack:** the angle between a sail and the incoming airflow.
 - **Luffing:** an underfilled sail fluttering with little drive. **Stall:** separated airflow from excessive sail angle, which reduces useful lift; a downwind sail also works through pressure drag.
 - **Leeway:** sideways drift through the water. **VMG:** the part of boat speed directed upwind; negative means downwind.
 - **Righting moment:** the turning force that restores the boat upright. **Wind shadow:** reduced wind downwind of another boat.
+
+Sails and booms cross continuously with finite angular speed. The displayed hull and crew interpolate the 120 Hz simulation, while rules and collisions use the original fixed-step state. Older personal-best records remain stored, but the refined maneuver model uses a separate record key so times are compared within the same model version.
 
 The editable numbers are in [src/config/boat.ts](src/config/boat.ts) and [src/config/environment.ts](src/config/environment.ts), with sailing explanations and units. Race geometry and AI steering choices are in [src/game/config.ts](src/game/config.ts). Change one setting at a time, sail comparable conditions, and inspect F3. Ask Codex to adjust these if you prefer not to edit files.
 

@@ -21,6 +21,26 @@ describe('crew and rig clearance', () => {
       }
     }
   });
+  it.each(['skipper', 'crew'] as const)('keeps %s clear of a stationary boom without dynamic anticipation', (role) => {
+    const boat = createBoatState();
+    for (const x of [-.95, -.6, -.3, 0, .3, .6, .95]) for (const aft of [0, .2, .4]) for (let i = 0; i <= 50; i++) {
+      const angle = -1.4 + i * 2.8 / 50; boat.crew = { skipperX: x, crewX: x, foreAft: aft, hike: x };
+      const pose = computeCrewPose(boat, role, { from: angle, to: angle, predicted: angle, anticipation: 0, previousDuck: 0 });
+      for (const [point, radius] of [[pose.head, POSE.headRadius], [pose.shoulder, POSE.torsoRadius]] as const)
+        expect(boomClearance(point, angle), `${role} x=${x} aft=${aft} angle=${angle}`).toBeGreaterThanOrEqual(radius + POSE.boomRadius + .02);
+    }
+  });
+  it('keeps a seated crew upright on a steady beam reach on a reach or close hauled when the boom is clear', () => {
+    const boat = createBoatState();
+    for (const side of [-1, 1]) for (const [opening, x] of [[.65, 0], [.65, .1], [.65, .25], [.14, .25], [.14, .5]]) {
+      boat.crew.crewX = -side * x;
+      const angle = side * opening;
+      const pose = computeCrewPose(boat, 'crew', { from: angle, to: angle, predicted: angle, anticipation: 0, previousDuck: 0 });
+      expect(pose.duck).toBeLessThan(.12);
+      expect(pose.shoulder.y - pose.hip.y).toBeGreaterThan(.28);
+      expect(pose.head.y).toBeGreaterThan(.78);
+    }
+  });
   it('ducks before a gybe reaches the sailor, including one-frame side changes', () => {
     const boat = createBoatState(); boat.crew.skipperX = 0;
     const pose = computeCrewPose(boat, 'skipper', { from: 1.4, to: 1.35, predicted: -1.4, anticipation: 1, previousDuck: 0 });
