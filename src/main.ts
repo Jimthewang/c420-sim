@@ -12,6 +12,8 @@ import { aiControls } from './game/ai';
 import { createLesson, updateLesson, type LessonState } from './game/tutorial';
 import { addSeriesRace, loadRecords, saveBest, saveRecords, type SeriesEntry } from './game/records';
 import { createUI, type SetupOptions, type HudView } from './ui';
+import { createSailingLog } from './game/sailing-log';
+import { createRaceCompanion, showSailingDebrief } from './race-companion';
 import './style.css';
 
 const settings:SailingSettings={...DEFAULT_SETTINGS,autoCrew:true,spinnaker:false};
@@ -19,6 +21,8 @@ const preferences={sound:true,finalBeeps:false,quality:'medium' as GraphicsQuali
 let storage:Storage|null=null;try{storage=window.localStorage;}catch{/* Private browsing can deny storage. */}
 const records=loadRecords(storage);
 const audio=createSailingAudio();
+const sailingLog=createSailingLog();
+const reducedMotion=window.matchMedia('(prefers-reduced-motion: reduce)');
 let options:SetupOptions={mode:'race',difficulty:'beginner',aiCount:3,courseLength:220,laps:1,windSpeedKnots:10,crewWeightKg:130,spinnaker:false,lessonIndex:0};
 let race:RaceState=createRace({...options,mode:'free',aiCount:0},settings);
 function prepareDisplayBoats(){return race.racers.map(r=>{
@@ -53,6 +57,7 @@ function launch(setup:SetupOptions,continueSeries=false){
   const mode=options.mode==='tutorial'?(options.lessonIndex===5?'race':options.lessonIndex===4?'time-trial':'free'):options.mode;
   const aiCount=['free','tutorial','time-trial'].includes(options.mode)?0:options.aiCount;
   race=createRace({...options,mode,aiCount,courseLength:options.mode==='tutorial'?120:options.courseLength},settings);
+  sailingLog.reset(race);
   if(mode==='time-trial')beginSequence(race);
   lesson=options.mode==='tutorial'?createLesson(options.lessonIndex):null;
   lessonSaved=false;manualHike=0;
@@ -87,6 +92,7 @@ const ui=createUI({
   debug(){debugOpen=!debugOpen;ui.showDebug(debugOpen);focusWater();},
   sheet(value){player().state.mainSheet=value;},
 });
+const raceCompanion=createRaceCompanion();
 const gui=new GUI({container:ui.mount,title:'Wind & boat',width:250});
 const lockedControllers=[
   gui.add(settings,'windSpeedKnots',E.windSpeedMinKnots,E.windSpeedMaxKnots,1).name('Wind (knots)'),
@@ -120,6 +126,7 @@ window.addEventListener('keydown',event=>{
   else if(key==='v'){event.preventDefault();resetCamera();}
   else if(key==='g')document.getElementById('settings-button')!.click();
   else if(key==='h')document.getElementById('help-button')!.click();
+  else if(key==='m'){event.preventDefault();raceCompanion.toggle();}
   else if(key==='f3'){event.preventDefault();debugOpen=!debugOpen;ui.showDebug(debugOpen);}
 });
 window.addEventListener('keyup',e=>keys.delete(e.key.toLowerCase()));
@@ -156,6 +163,7 @@ function finish(){
   else if(row.penalties)tips.push('Leave more space at crossings. Port gives way to starboard; avoid the windward boat’s side on the same tack.');
   else tips.push('You avoided rule penalties. Protect that clear lane and give yourself room at the marks.');
   resultsOpen=true;clearInput();ui.showResults({rows:view.standings,tips,series,raceNumber,mode:options.mode,best:records.bests[recordKey()]??null,newBest:newPersonalBest,saved:saveProgress(),seriesComplete:raceNumber>=3});
+  showSailingDebrief(sailingLog.snapshot());
 }
 
 try{
@@ -184,6 +192,7 @@ try{
         if(preferences.finalBeeps&&race.phase==='countdown'&&Math.ceil(race.countdown)<Math.ceil(oldCountdown)&&Math.ceil(race.countdown)<=10&&Math.ceil(race.countdown)>0){const n=Math.ceil(race.countdown);if(n!==previousBeep){audio.beep();previousBeep=n;}}
         for(const event of race.events.splice(0)){if(event.type==='horn')audio.horn();if(event.type==='practice-restart')previousBeep=180;}
         const state=player().state;const telemetry=getTelemetry(state,{...settings,windShadows:shadows.filter(s=>s.id!=='player')});
+        sailingLog.update(race,telemetry);
         if((race.phase==='racing'&&player().finishedAt===null)||options.mode==='free'){stats.sailing+=step;if(Math.abs(telemetry.trueWindAngleDeg)<40)stats.pinching+=step;if(telemetry.main.status==='luffing')stats.luffing+=step;if(telemetry.main.status==='stalled'&&Math.abs(telemetry.trueWindAngleDeg)<150)stats.stalled+=step;}
         if(state.capsized&&!stats.lastCapsized&&player().finishedAt===null&&(race.phase==='racing'||options.mode==='free'))stats.capsizes++;stats.lastCapsized=state.capsized;
         if(lesson){updateLesson(lesson,{dt:step,speed:telemetry.speedKnots,windAngle:telemetry.trueWindAngleDeg,vmg:telemetry.vmgKnots,steered:controls.steer!==0,trimmed:keys.has('w')||keys.has('s'),tackCount:state.tackCount,gybeCount:state.gybeCount,roundings:player().roundings,legallyStarted:player().started&&!player().ocs});if(lesson.passed&&!lessonSaved){lessonSaved=true;if(!records.lessons.includes(lesson.index))records.lessons.push(lesson.index);saveProgress();clearInput();}}
@@ -196,13 +205,14 @@ try{
     const telemetry=getTelemetry(state,shadowSettings);
     const view=getRaceView(race);const showCourse=started&&options.mode!=='free'&&(!lesson||lesson.index>=4);
     const display=displayBoats.map(b=>b.sample(running?accumulator/E.fixedTimeStep:1));
-    world.render(display[0],telemetry,settings,cameraMode,running?dt:0,{opponents:race.racers.slice(1).map((r,i)=>({id:r.id,name:r.name,boat:display[i+1],color:r.color})),course:showCourse?race.course:null,target:showCourse?view.nextTarget:null,difficulty:options.difficulty,quality:preferences.quality,spinnaker:settings.spinnaker,outlines:preferences.outlines,daylight:preferences.daylight,terrainSeed:preferences.terrainSeed});
+    world.render(display[0],telemetry,settings,cameraMode,running?dt:0,{opponents:race.racers.slice(1).map((r,i)=>({id:r.id,name:r.name,boat:display[i+1],color:r.color})),course:showCourse?race.course:null,target:showCourse?view.nextTarget:null,difficulty:options.difficulty,quality:preferences.quality,spinnaker:settings.spinnaker,outlines:preferences.outlines,daylight:preferences.daylight,terrainSeed:preferences.terrainSeed,showcase:!started,presentationTime:timestamp/1000,reducedMotion:reducedMotion.matches});
     audio.setPaused(!running);audio.update(state,telemetry,running?dt:0);
     hudTimer+=dt;
     if(hudTimer>=.1||!running){
       const distance=view.nextTarget?Math.hypot(view.nextTarget.x-state.position.x,view.nextTarget.z-state.position.z):NaN;
       const hud:HudView={phase:view.phase,timer:view.phase==='prestart'||view.phase==='countdown'?view.countdown:view.elapsed,place:view.place,total:race.racers.length,target:view.targetLabel,distance,message:view.playerFinished&&race.phase!=='finished'?'You finished · watching the remaining fleet':view.message,difficulty:options.difficulty,mode:options.mode,raceNumber,penalty:view.penaltyTurns>0,finished:view.playerFinished,practiceStarts:view.practiceStarts,autoCrew:settings.autoCrew!==false};
       ui.update(state,telemetry,cameraMode,hud,lesson);ui.setFrameRate(frameMs>0?1000/frameMs:0);hudTimer=0;
+      raceCompanion.update(race,telemetry,started&&!resultsOpen,showCourse,options.difficulty);
     }
     requestAnimationFrame(frame);
   }

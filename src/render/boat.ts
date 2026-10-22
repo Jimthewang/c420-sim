@@ -162,6 +162,8 @@ export function createDinghy(options: { simplified?: boolean; color?: number } =
   const mainSail = mesh(mainGeometry, sailMaterial, mainRig, 0.004);
   const jibGeometry = mainGeometry.clone();
   const jibSail = mesh(jibGeometry, jibMaterial, boat, 0.004);
+  // Thin, double-sided cloth still casts a shadow, but does not self-shadow into moire bands.
+  mainSail.receiveShadow = jibSail.receiveShadow = false;
   function telltale(color: number, name: string, parent = boat) {
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(30), 3));
@@ -216,6 +218,7 @@ export function createDinghy(options: { simplified?: boolean; color?: number } =
   spinGeometry.setIndex(spinIndices);
   spinGeometry.computeVertexNormals();
   const spinnaker = mesh(spinGeometry, toonMaterial(0xffffff, { vertexColors: true, side: THREE.DoubleSide }), boat, 0.004);
+  spinnaker.receiveShadow = false;
   spinnaker.visible = false;
   const poleStart = new THREE.Vector3(0, boomHeight + 0.15, mastZ);
   const poleEnd = new THREE.Vector3(-1.45, jibTop - 3.55, mastZ - 1.05);

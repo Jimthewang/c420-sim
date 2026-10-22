@@ -58,4 +58,24 @@ describe('free camera navigation', () => {
     expect(rig.camera.position.distanceTo(new THREE.Vector3(0, .75, 0))).toBeCloseTo(4, 2);
     rig.dispose(); clock.mockRestore();
   });
+  it('frames the full showcase boat on the right of desktop and centrally on narrow screens without changing state', () => {
+    for (const [width, height] of [[1280, 720], [390, 844], [319, 812], [760, 500]]) {
+      const canvas = new EventTarget() as EventTarget & Record<string, unknown>;
+      Object.assign(canvas, { clientWidth: width, clientHeight: height, style: {}, setPointerCapture() {}, hasPointerCapture() { return false; }, releasePointerCapture() {}, focus() {} });
+      const rig = createCameraRig(canvas as unknown as HTMLCanvasElement), state = createBoatState(), before = structuredClone(state);
+      rig.resize(width, height); rig.setShowcase({ yaw: .7, time: 12, reducedMotion: true });
+      rig.update(state, 'chase', 1 / 60, DEFAULT_SETTINGS); rig.camera.updateMatrixWorld(true);
+      const points = [[0, 6.26, -.67], [-.82, 0, 0], [.82, 0, 0], [0, 0, -2.1], [0, 0, 2.3]].map(p => new THREE.Vector3(...p as [number, number, number]).project(rig.camera));
+      expect(points.every(p => Math.abs(p.y) < .92 && Math.abs(p.x) < .96)).toBe(true);
+      const center = new THREE.Vector3(0, 2.7, 0).project(rig.camera);
+      expect(center.x).toBeCloseTo(width > 760 ? .44 : 0, 2);
+      if (width <= 760) for (const point of points) {
+        const pixelY = (1 - point.y) * height / 2;
+        expect(pixelY).toBeGreaterThan(80); expect(pixelY).toBeLessThan(height * .32);
+      }
+      expect(state).toEqual(before);
+      rig.setShowcase(null); rig.update(state, 'chase', 1 / 60, DEFAULT_SETTINGS);
+      expect(rig.camera.view?.enabled ?? false).toBe(false); rig.dispose();
+    }
+  });
 });

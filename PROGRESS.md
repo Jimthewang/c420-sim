@@ -1,6 +1,6 @@
 # C420 simulator progress
 
-## All seven phases, NPR world, solid collisions and refined sailing motion implemented
+## All seven phases, coastal regatta presentation and refined sailing motion implemented
 
 The game now supports a complete sailing session: menu, setup, pre-start sailing, three-minute sequence, fleet race, finish, results, and another race or return to the menu. The later request to complete every phase together replaces the original intermediate stopping points. The original SPEC.md remains unchanged.
 
@@ -14,7 +14,22 @@ The game now supports a complete sailing session: menu, setup, pre-start sailing
 | 6 | Up to seven selectable AI opponents using the same boat physics, wind shadows, boat avoidance, OCS/capsize recovery, simplified right-of-way, and sailed penalty turns. |
 | 7 | Three assistance levels, six interactive lessons, three-race low-point scoring, browser-saved records and lesson progress, graphics settings, and fleet rendering optimizations. |
 
-## Sailing motion and crew refinement (October 22)
+## Coastal regatta experience (October 22)
+
+- A full-boat lighthouse showcase leads into a clearer race setup. The cream/lemon interface now groups sail status, speed, heading and mainsheet into one helm console. Narrow windows keep the boat above the menu; reduced-motion preferences freeze the showcase drift. Gameplay camera controls survive menu transitions.
+- The cyan sea has depth-based mint shallows, stable world-space highlights, smaller bow spray and paired persistent wake ribbons. Pausing freezes their simulation clock. Final near/far heights and colors match across all quality levels; wake orientation follows the shared wave normal. Thin sail surfaces no longer receive self-shadow acne, while retaining toon lighting and cast shadows.
+- A foldable north-up chart shows real terrain depth, marks, fleet and recent player track. The leg strip follows legal course progress. Beginner navigation uses hull-to-line distance, a conditional finite-line ETA, target bearing and closing speed. Realistic mode retains its aid restrictions.
+- Player-specific notices cover starts, OCS, rounding, penalties, capsize/recovery and finishes. A bounded log records actual sailing after the legal start, freezes at finish/DNF and supplies the results speed trace, peak/mean speed, distance and maneuver count. Presentation reads authoritative state without consuming events or changing physics, rules, teaching goals or record keys.
+
+## Current verification (October 22, regatta presentation)
+
+- **203 tests across 23 files pass** in the final full run; TypeScript and production build pass. Existing sailing, contact, crew, tutorial, scoring and five complete-fleet regressions remain green with their original time limits. The existing bundle-size advisory remains.
+- New tests cover actual course/lap progress, finite hull-line estimates, event priority/reset, legal-start logs and finish/DNF freeze, chart projection, stable surface highlights, pause/reset, responsive showcase framing and state isolation. Water seam checks cover every quality level; wake geometry checks cover 20-knot wind in four directions and five boat headings.
+- A clearly labeled, private verification page drove the real physics and AI through a complete four-boat race, then rendered the production results and recorded sailing debrief. All four boats finished. The player's trace held 291 samples, 552 m sailed and a 5.4-knot peak. This was accelerated simulation/UI verification, not a human-sailed race or saved user record.
+- Browser checks cover 1280, 1024, 390 and 319-pixel layouts, menu/setup/help, lessons, free sailing, helm/trim, race countdown, chart controls, cameras, pause, outline/seed/daylight controls and low-quality night sailing. Tested-flow console inspection is clean. The free-sailing frame-rate readout was 60 fps on this Mac; it is not a hardware-independent benchmark.
+- Independent review reproduced and closed the new depth-color seam and a high-wind wake orientation error. Separate probes verified menu state isolation, restored camera controls, logged finish/DNF behavior, chart cache/history bounds and assistance restrictions. There are no remaining reproducible high/medium-severity findings from that scoped review; sampled checks do not replace sailor acceptance.
+
+## Sailing motion and crew refinement (October 22, preceding iteration)
 
 - Actual main and jib angles now move with bounded speed and acceleration and drive both sail forces and the visible rig. The boom no longer teleports across a gybe; backed-sail force stays continuous through reversed airflow. The existing lift/drag coefficients, foil/hull/roll force blocks and read-only `getTelemetry` are preserved.
 - Tacks require a genuine hull turn, so wind oscillation alone cannot increment the maneuver count. Space coordinates the crew's old-side roll and new-side flattening in both control modes through the existing righting equations. The former fixed forward-energy award is removed. Switching from automatic to manual crew preserves current jib opening and hiking position.
@@ -24,7 +39,7 @@ The game now supports a complete sailing session: menu, setup, pre-start sailing
 - Two captured AI backing failures now recover through ordinary helm/sheet controls. A tiny floating-point residue in already-separated grounding contacts no longer triggers repeated whole-fleet collision passes; no collision clearance tolerance was relaxed.
 - Apparent wind angle/speed, signed upwind VMG and actual helm deflection are visible during sailing. F3 includes measured browser frame rate. New motion-version course records keep earlier saved times separate.
 
-## Current verification (October 22)
+## Earlier motion verification (October 22)
 
 - **171 tests across 19 files pass**, including TypeScript and production build checks. All five complete fleet scenarios retain their original finish, rounding, penalty and timeout assertions. The existing bundle-size advisory remains.
 - Motion regressions cover bounded rig speed/acceleration, backed-sail force continuity, wind-only false tacks, actual roll/flatten sequences, automatic/manual handoff, AI recovery and 90/144 Hz display interpolation. Collision checks retain high-speed sweeps, capsizes, conservative terrain/foil clearance and the dense shoreline queue.

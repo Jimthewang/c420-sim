@@ -23,4 +23,7 @@ export interface RenderExtras {
   outlines?: boolean;
   daylight?: number;
   terrainSeed?: number;
+  showcase?: boolean;
+  presentationTime?: number;
+  reducedMotion?: boolean;
 }

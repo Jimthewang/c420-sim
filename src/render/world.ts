@@ -2,8 +2,9 @@ import * as THREE from 'three';
 import { sampleWind } from '../physics/sailing';
 import { KNOTS_TO_MPS } from '../config/environment';
 import type { BoatState, CameraMode, SailingSettings, Telemetry } from '../physics/types';
-import { configureTerrainCourse, getTerrainSeed, protectTerrainPoints, setTerrainSeed } from '../world/terrain';
+import { configureTerrainCourse, getTerrainHeight, getTerrainSeed, protectTerrainPoints, setTerrainSeed } from '../world/terrain';
 import { createDinghy } from './boat';
+import { createAtmosphere, getShowcasePlacement } from './atmosphere';
 import { createCameraRig } from './camera';
 import { boatMarker, createCourseScene, disposeObject } from './course';
 import { createFoamSystem } from './foam';
@@ -12,9 +13,10 @@ import { attachOutline, disposeOutlines, setOutlinesEnabled, toonMaterial } from
 import { prepareWaveHeightSampler } from '../world/waves';
 import type { GraphicsQuality, RenderCourse, RenderExtras } from './types';
 
+interface SeaSample { height: number; tint: number; r: number; g: number; b: number }
 interface SeaBoundary {
   segments: number; readonly version: number;
-  sample(x: number, z: number, out: { height: number; tint: number }): void;
+  sample(x: number, z: number, out: SeaSample): void;
 }
 
 /** Indexed sampling keeps wave evaluation cheap; the rendered surface has independent flat faces. */
@@ -72,12 +74,16 @@ export function createSeaPatch(span: number, segments: number, hole = 0, innerBo
   (geometry.attributes.position as THREE.BufferAttribute).setUsage(THREE.DynamicDrawUsage);
   (geometry.attributes.normal as THREE.BufferAttribute).setUsage(THREE.DynamicDrawUsage);
   (geometry.attributes.color as THREE.BufferAttribute).setUsage(THREE.DynamicDrawUsage);
-  const mesh = new THREE.Mesh(geometry, toonMaterial(0x2bc4ff, { vertexColors: true, transparent: true, opacity: 0.94, depthWrite: true }));
+  const mesh = new THREE.Mesh(geometry, toonMaterial(0xffffff, { vertexColors: true, transparent: true, opacity: 0.94, depthWrite: true }));
   mesh.receiveShadow = true; mesh.frustumCulled = false;
   mesh.renderOrder = hole ? 1 : 2;
-  const heights = new Float32Array(source.length / 3), used = new Uint8Array(heights.length), edgeSample = { height: 0, tint: 1 };
+  const heights = new Float32Array(source.length / 3), used = new Uint8Array(heights.length), edgeSample: SeaSample = { height: 0, tint: 1, r: 0, g: 0, b: 0 };
+  const red = new Float32Array(heights.length), green = new Float32Array(heights.length), blue = new Float32Array(heights.length);
   for (const vertex of indices) used[vertex] = 1;
   let lastInputs: number[] = [], version = 0;
+  let depthX = NaN, depthZ = NaN, depthSeed = NaN;
+  const depths = new Float32Array(heights.length);
+  const deepColor = new THREE.Color(0x31c8df), shallowColor = new THREE.Color(0x86e4cf), waterColor = new THREE.Color();
   const boundary: SeaBoundary = {
     segments, get version() { return version; },
     sample(x, z, out) {
@@ -88,14 +94,19 @@ export function createSeaPatch(span: number, segments: number, hole = 0, innerBo
       const value = (values: Float32Array) => (values[z0 * (segments + 1) + x0] * (1 - u) + values[z0 * (segments + 1) + x1] * u) * (1 - v)
         + (values[z1 * (segments + 1) + x0] * (1 - u) + values[z1 * (segments + 1) + x1] * u) * v;
       out.height = value(heights); out.tint = value(tints);
+      out.r = value(red); out.g = value(green); out.b = value(blue);
     },
   };
   function update(x: number, z: number, time: number, settings: SailingSettings) {
-    const inputs = [x, z, time, settings.windSpeedKnots, settings.windDirectionDeg, Number(settings.gusts), Number(settings.shifts), innerBoundary?.version ?? 0];
+    const inputs = [x, z, time, getTerrainSeed(), settings.windSpeedKnots, settings.windDirectionDeg, Number(settings.gusts), Number(settings.shifts), innerBoundary?.version ?? 0];
     for (const shadow of settings.windShadows ?? []) inputs.push(shadow.position.x, shadow.position.z);
     if (inputs.length === lastInputs.length && inputs.every((value, index) => value === lastInputs[index])) return;
     lastInputs = inputs; version++;
     mesh.position.set(x, 0, z);
+    if (depthX !== x || depthZ !== z || depthSeed !== getTerrainSeed()) {
+      for (let i = 0; i < depths.length; i++) if (used[i]) depths[i] = getTerrainHeight(source[i * 3] + x, source[i * 3 + 2] + z);
+      depthX = x; depthZ = z; depthSeed = getTerrainSeed();
+    }
     // Direction is spatially uniform; gusts and boat shadows still supply each vertex's exact local speed.
     const heightAt = prepareWaveHeightSampler(time, sampleWind(x, z, time, settings).direction);
     for (let vertex = 0; vertex < heights.length; vertex++) {
@@ -103,20 +114,24 @@ export function createSeaPatch(span: number, segments: number, hole = 0, innerBo
       const worldX = source[vertex * 3] + x, worldZ = source[vertex * 3 + 2] + z;
       const localX = source[vertex * 3], localZ = source[vertex * 3 + 2];
       if (innerBoundary && (Math.abs(localX) === hole && Math.abs(localZ) <= hole || Math.abs(localZ) === hole && Math.abs(localX) <= hole)) {
-        innerBoundary.sample(localX, localZ, edgeSample); heights[vertex] = edgeSample.height; tints[vertex] = edgeSample.tint; continue;
+        innerBoundary.sample(localX, localZ, edgeSample); heights[vertex] = edgeSample.height; tints[vertex] = edgeSample.tint;
+        red[vertex] = edgeSample.r; green[vertex] = edgeSample.g; blue[vertex] = edgeSample.b; continue;
       }
       const wind = sampleWind(worldX, worldZ, time, settings);
       const height = heightAt(worldX, worldZ, wind.speed / KNOTS_TO_MPS);
       heights[vertex] = height;
       const puff = settings.gusts ? 1 - Math.max(0, wind.gust) * 0.7 : 1;
-      tints[vertex] = puff * (0.98 + Math.max(-0.54, Math.min(0.54, height)) * 0.035);
+      tints[vertex] = puff * (0.98 + Math.max(-0.54, Math.min(0.54, height)) * 0.20);
+      const shallow = THREE.MathUtils.smoothstep(depths[vertex], -7, -0.6);
+      waterColor.copy(deepColor).lerp(shallowColor, shallow).multiplyScalar(tints[vertex]);
+      red[vertex] = waterColor.r; green[vertex] = waterColor.g; blue[vertex] = waterColor.b;
     }
     const positions = geometry.attributes.position.array as Float32Array;
     for (let vertex = 0; vertex < indices.length; vertex++) {
       const sourceIndex = indices[vertex], offset = vertex * 3;
       positions[offset + 1] = heights[sourceIndex];
-      // Shared vertices receive the same tint; interpolation avoids sawtooth wind-puff edges.
-      colors[offset] = colors[offset + 1] = colors[offset + 2] = tints[sourceIndex];
+      // Final RGB also crosses the shared boundary: depth-to-color is nonlinear.
+      colors[offset] = red[sourceIndex]; colors[offset + 1] = green[sourceIndex]; colors[offset + 2] = blue[sourceIndex];
     }
     // Nonindexed flat faces share one normal: normalize once per triangle, not once per duplicate vertex.
     const normals = geometry.attributes.normal.array as Float32Array;
@@ -130,7 +145,7 @@ export function createSeaPatch(span: number, segments: number, hole = 0, innerBo
     geometry.attributes.position.needsUpdate = true; geometry.attributes.normal.needsUpdate = true;
     geometry.attributes.color.needsUpdate = true;
   }
-  return { mesh, boundary, update, dispose() { geometry.dispose(); mesh.material.dispose(); mesh.removeFromParent(); } };
+  return { mesh, boundary, update, invalidateTerrain() { depthSeed = NaN; lastInputs = []; }, dispose() { geometry.dispose(); mesh.material.dispose(); mesh.removeFromParent(); } };
 }
 
 export function createWorld(canvas: HTMLCanvasElement) {
@@ -150,18 +165,19 @@ export function createWorld(canvas: HTMLCanvasElement) {
   sunlight.shadow.bias = -0.00035; sunlight.shadow.normalBias = 0.06;
   scene.add(sunlight, sunlight.target);
   let nearSea = createSeaPatch(360, 96), farSea = createSeaPatch(1200, 60, 180, nearSea.boundary);
-  const horizon = new THREE.Mesh(new THREE.PlaneGeometry(12000, 12000).rotateX(-Math.PI / 2), toonMaterial(0x2bc4ff));
+  const horizon = new THREE.Mesh(new THREE.PlaneGeometry(12000, 12000).rotateX(-Math.PI / 2), toonMaterial(0x31c8df));
   horizon.position.y = -0.6; horizon.receiveShadow = false;
   scene.add(horizon, farSea.mesh, nearSea.mesh);
   const foam = createFoamSystem(); scene.add(foam.object);
   let terrain: ReturnType<typeof createTerrainScene> | null = null;
+  const atmosphere = createAtmosphere(); scene.add(atmosphere.object);
 
   const sun = new THREE.Mesh(new THREE.IcosahedronGeometry(13, 2), toonMaterial(0xffe144, { emissive: 0xffe144, emissiveIntensity: 1 }));
   const moon = new THREE.Mesh(new THREE.IcosahedronGeometry(9, 1), toonMaterial(0xffffff, { emissive: 0xcde7ff, emissiveIntensity: 0.8 }));
   scene.add(sun, moon);
   const cloudGeometry = new THREE.IcosahedronGeometry(1, 1), cloudMaterial = toonMaterial(0xffffff);
   const clouds = new THREE.InstancedMesh(cloudGeometry, cloudMaterial, 72); clouds.frustumCulled = false; scene.add(clouds);
-  attachOutline(clouds, 0.025);
+  // Clouds keep soft cream edges so the ink contour remains focused on boats and the coast.
   const cloudSeeds: { x: number; y: number; z: number; size: number }[] = [];
   for (let cluster = 0; cluster < 18; cluster++) for (let lobe = 0; lobe < 4; lobe++) {
     const angle = cluster * 2.39996, radius = 160 + (cluster % 5) * 90;
@@ -178,12 +194,15 @@ export function createWorld(canvas: HTMLCanvasElement) {
   stars.instanceMatrix.needsUpdate = true;
   const daySky = new THREE.Color(0x86dcff), twilightSky = new THREE.Color(0xf5b794), nightSky = new THREE.Color(0x102d59);
   const lightDirection = new THREE.Vector3(), color = new THREE.Color();
+  let cloudTime = NaN;
 
   const dinghy = createDinghy(); scene.add(dinghy.object);
   const playerMarker = boatMarker(0x29444d, 'Y'); scene.add(playerMarker);
   const fleet = new Map<string, { model: ReturnType<typeof createDinghy>; marker: THREE.Sprite }>();
   let currentCourse: RenderCourse | null = null, courseKey = '', terrainSeed = NaN;
   let courseScene: ReturnType<typeof createCourseScene> | null = null;
+  let showcaseBoat: BoatState | null = null, showcaseStart = 0, showcaseActive = false;
+  let showcasePlacement = { x: 0, z: 0, yaw: .6 };
   let quality: GraphicsQuality = 'medium', outlines: boolean | undefined, lastTime = -1;
   const laylines = [-1, 1].map(side => {
     const line = new THREE.Line(new THREE.BufferGeometry(), new THREE.LineDashedMaterial({ color: side < 0 ? 0xffffff : 0xffe144, dashSize: 2.5, gapSize: 2.5, transparent: true, opacity: 0.7 }));
@@ -211,6 +230,14 @@ export function createWorld(canvas: HTMLCanvasElement) {
   function render(state: BoatState, telemetry: Telemetry, settings: SailingSettings, cameraMode: CameraMode, dt: number, extras: RenderExtras = {}) {
     if (extras.quality && extras.quality !== quality) setQuality(extras.quality);
     if ((extras.outlines ?? true) !== outlines) { outlines = extras.outlines ?? true; setOutlinesEnabled(outlines); }
+    const showcase = extras.showcase ?? false;
+    if (showcase !== showcaseActive) {
+      showcaseActive = showcase; foam.reset();
+      if (showcase) {
+        showcaseBoat = structuredClone(state); showcaseStart = extras.presentationTime ?? 0;
+        showcasePlacement = getShowcasePlacement(extras.daylight ?? 14);
+      } else showcaseBoat = null;
+    }
     const reset = state.time < lastTime; lastTime = state.time;
     if (reset) { foam.reset(); rig.reset(); }
     const nextCourse = extras.course ?? null, nextKey = nextCourse ? `${nextCourse.windDirectionDeg}/${nextCourse.length}` : 'free';
@@ -219,25 +246,45 @@ export function createWorld(canvas: HTMLCanvasElement) {
       protectTerrainPoints([state.position, ...(extras.opponents ?? []).map(opponent => opponent.boat.position)]);
       setTerrainSeed(nextSeed); configureTerrainCourse(nextCourse); terrainSeed = getTerrainSeed(); courseKey = nextKey;
       terrain?.dispose(); terrain = createTerrainScene(); scene.add(terrain.object); foam.setShoreline(terrain.shoreline);
+      nearSea.invalidateTerrain(); farSea.invalidateTerrain();
+      if (showcase) showcasePlacement = getShowcasePlacement(extras.daylight ?? 14);
     }
     if (nextCourse !== currentCourse) {
       if (courseScene) { disposeOutlines(courseScene.object); disposeObject(courseScene.object); }
       currentCourse = nextCourse; courseScene = currentCourse ? createCourseScene(currentCourse) : null;
       if (courseScene) scene.add(courseScene.object);
     }
-    const spin = extras.spinnaker ?? settings.spinnaker;
-    const boats = [state, ...(extras.opponents ?? []).map(opponent => opponent.boat)];
+    if (showcase && showcaseBoat) {
+      const display = showcaseBoat;
+      display.time = extras.reducedMotion ? 0 : Math.max(0, (extras.presentationTime ?? 0) - showcaseStart) * .65;
+      display.position.x = showcasePlacement.x; display.position.z = showcasePlacement.z;
+      display.heading = -showcasePlacement.yaw - .65;
+      display.velocity.x = display.velocity.z = display.yawRate = display.rollRate = display.rudder = 0;
+      display.heel = .035; display.capsized = false; display.planing = 0; display.rightingProgress = 0; display.centerboard = 1;
+      display.mainSheet = display.jibSheet = .65;
+      display.main.angle = .55; display.main.status = 'drawing'; display.main.lift = 140; display.main.angleOfAttack = .18;
+      display.jib.angle = .36; display.jib.status = 'drawing'; display.jib.lift = 60; display.jib.angleOfAttack = .18;
+      display.mainAngularVelocity = display.jibAngularVelocity = 0;
+      display.crew.skipperX = -.38; display.crew.crewX = -.34; display.crew.hike = -.35; display.crew.foreAft = 0;
+      display.rollTackPhase = 'idle';
+      state = display;
+    }
+    rig.setShowcase(showcase ? { yaw: showcasePlacement.yaw, time: state.time, reducedMotion: extras.reducedMotion } : null);
+    if (courseScene) courseScene.object.visible = !showcase;
+    const opponents = showcase ? [] : extras.opponents ?? [];
+    const spin = !showcase && (extras.spinnaker ?? settings.spinnaker);
+    const boats = [state, ...opponents.map(opponent => opponent.boat)];
     const boatEnvironment = (boat: BoatState) => ({ ...settings, windShadows: boats.filter(other => other !== boat).map(other => ({ position: other.position, heading: other.heading })) });
     const waveWind = sampleWind(state.position.x, state.position.z, state.time, boatEnvironment(state));
     const waveKnots = waveWind.speed / KNOTS_TO_MPS;
     dinghy.update(state, spin, telemetry.trueWindAngleDeg, waveKnots, waveWind.direction);
-    const tactical = cameraMode === 'tactical', assists = (extras.difficulty ?? 'beginner') !== 'realistic';
+    const tactical = !showcase && cameraMode === 'tactical', assists = (extras.difficulty ?? 'beginner') !== 'realistic';
     clouds.visible = !tactical;
-    const opponentIds = new Set(extras.opponents?.map(opponent => opponent.id) ?? []);
+    const opponentIds = new Set(opponents.map(opponent => opponent.id));
     for (const [id, opponent] of fleet) if (!opponentIds.has(id)) {
       disposeOutlines(opponent.model.object); disposeObject(opponent.model.object); disposeObject(opponent.marker); fleet.delete(id);
     }
-    for (const opponent of extras.opponents ?? []) {
+    for (const opponent of opponents) {
       let entry = fleet.get(opponent.id);
       if (!entry) {
         const color = opponent.color ?? 0xe57b55;
@@ -249,7 +296,7 @@ export function createWorld(canvas: HTMLCanvasElement) {
       entry.marker.position.set(opponent.boat.position.x, 2, opponent.boat.position.z); entry.marker.material.rotation = -opponent.boat.heading; entry.marker.visible = tactical;
     }
     playerMarker.position.set(state.position.x, 2.3, state.position.z); playerMarker.material.rotation = -state.heading; playerMarker.visible = tactical;
-    const navigationTarget = extras.target;
+    const navigationTarget = showcase ? null : extras.target;
     laylines.forEach(line => { line.visible = !!navigationTarget && assists; });
     courseArrow.visible = !!navigationTarget && (extras.difficulty ?? 'beginner') === 'beginner';
     if (navigationTarget) {
@@ -283,11 +330,15 @@ export function createWorld(canvas: HTMLCanvasElement) {
     sun.position.set(state.position.x + Math.cos(sunAngle) * 520, sunHeight * 520, state.position.z - 240); sun.visible = sunHeight > -0.08;
     moon.position.set(state.position.x - Math.cos(sunAngle) * 520, -sunHeight * 520, state.position.z + 180); moon.visible = sunHeight < 0.05;
     stars.position.set(state.position.x, 0, state.position.z); stars.visible = night > 0.65;
-    cloudSeeds.forEach((cloud, index) => {
-      transform.position.set(state.position.x + cloud.x + Math.sin(state.time * 0.003 + index) * 8, cloud.y, state.position.z + cloud.z);
-      transform.rotation.set(0, index * 0.7, 0); transform.scale.set(cloud.size * 1.5, cloud.size * 0.6, cloud.size); transform.updateMatrix(); clouds.setMatrixAt(index, transform.matrix);
-    }); clouds.instanceMatrix.needsUpdate = true;
+    if (cloudTime !== state.time) {
+      cloudTime = state.time;
+      cloudSeeds.forEach((cloud, index) => {
+        transform.position.set(cloud.x + Math.sin(state.time * .003 + index) * 8, cloud.y, cloud.z + Math.sin(state.time * .002) * 12);
+        transform.rotation.set(0, index * .7, 0); transform.scale.set(cloud.size * 1.5, cloud.size * .6, cloud.size); transform.updateMatrix(); clouds.setMatrixAt(index, transform.matrix);
+      }); clouds.instanceMatrix.needsUpdate = true;
+    }
     terrain?.update(state.time, night);
+    atmosphere.update(state.position, state.time, seaEnvironment, day, twilight, extras.reducedMotion ?? false, tactical);
     rig.update(state, cameraMode, dt, seaEnvironment, currentCourse ?? undefined);
     camera.getWorldDirection(arrowDirection);
     const pixelScale = 2 * Math.tan(camera.fov * Math.PI / 360) / Math.max(1, canvas.clientHeight);
@@ -302,7 +353,7 @@ export function createWorld(canvas: HTMLCanvasElement) {
   }
 
   function dispose() {
-    rig.dispose(); terrain?.dispose(); foam.dispose(); nearSea.dispose(); farSea.dispose(); disposeOutlines(scene);
+    rig.dispose(); terrain?.dispose(); atmosphere.dispose(); foam.dispose(); nearSea.dispose(); farSea.dispose(); disposeOutlines(scene);
     const geometries = new Set<THREE.BufferGeometry>(), materials = new Set<THREE.Material>();
     scene.traverse(object => {
       if (object instanceof THREE.Mesh || object instanceof THREE.Line || object instanceof THREE.Sprite) {

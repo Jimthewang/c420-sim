@@ -23,7 +23,9 @@ The six lessons cover reaching, the no-go zone, tacking, gybing, rounding a mark
 3. Horns sound at 3:00, 2:00, 1:00, and the start. Cross between the pin and committee boat toward the wind after the start. **OCS** means over the starting line early; return completely below the line and cross again.
 4. Sail around the windward mark, keeping it to port (your left), then sail downwind between the two gate marks. On another lap, round either gate mark to the outside and head upwind again. On the last lap, continue downwind across the start/finish line.
 5. Give way when on port tack to a starboard-tack boat. On the same tack, keep clear when overtaking or when overlapping to windward. A contact can require a penalty: press **P**, then sail one complete 360° turn before finishing.
-6. Your completed time saves immediately. When the fleet finishes or the time limit expires, the results show places, elapsed times, OCS, penalties, and three sailing tips. Choose **Race again** or **Back to menu**.
+6. Your completed time saves immediately. When the fleet finishes or the time limit expires, the results show places, elapsed times, OCS, penalties, three sailing tips, and your actual speed trace, distance, peak/average speed and maneuvers. The sailing log runs from your legal start to your finish or DNF. Choose **Race again** or **Back to menu**.
+
+The live **Course chart** shows the marks, fleet and recent track on a north-up depth chart. Press **M** to fold or reopen it. The leg strip follows your actual course progress. Beginner mode adds hull-to-line distance and an estimated time to the finite start line when your current velocity would reach it; after starting, it shows target bearing, distance and closing speed. Realistic mode hides these navigation aids. Brief notices call out your starts, OCS, roundings, penalties and recovery.
 
 **Three-race series** keeps the same fleet for three races. Low points win: first earns 1, second 2, and a boat that does not finish earns fleet size + 1. Ties compare best finishes, then the most recent race. Click **Next race** between races. The current series stays in the session; personal bests, lesson progress, and series wins persist in this browser.
 
@@ -56,6 +58,7 @@ The six lessons cover reaching, the no-go zone, tacking, gybing, rounding a mark
 | Scroll / trackpad scroll | Smooth zoom from 4 to 180 metres |
 | V or double-click the water | Smoothly recenter on your boat |
 | C | Orbit follow → isometric diorama → tactical overview |
+| M | Show / fold the live course chart |
 | G | Wind, boat, sound, and graphics settings |
 | F3 | Physics readout (Fn+F3 may be needed on a Mac) |
 | H | Controls help |
@@ -68,9 +71,9 @@ The crew trims the jib and balances weight automatically by default. Turning aut
 
 ## Islands, views, and appearance
 
-The curved boats sail among three-dimensional islands with yellow beaches, green meadows, turquoise cliffs, trees, and a lighthouse. Polygonal waves lift and tilt the boat; white foam follows shorelines, bow splashes, wakes, and roll tacks. The camera stays above water and ground. You can drag outside the pause card while paused to inspect the scene.
+The curved boats sail among three-dimensional islands with yellow beaches, green meadows, turquoise cliffs, trees, and a lighthouse. A coastal opening scene frames the whole boat; on the water, shallow-water color, wave highlights, small bow splashes and thin persistent wakes make motion visible. Polygonal waves lift and tilt the boat. The camera stays above water and ground. You can drag outside the pause card while paused to inspect the scene. The menu respects reduced-motion preferences.
 
-Use **Ink on/off** at the top left to toggle black model outlines, **New islands** to generate another terrain seed, and **Sun** to choose a fixed hour of day or night. These controls work during a session. The course and current fleet positions remain deep water when islands regenerate.
+Use **Ink on/off** to toggle black model outlines, **New islands** to generate another terrain seed, and **Sun** to choose a fixed hour of day or night. These controls work in the menu and during a session. The course and current fleet positions remain deep water when islands regenerate.
 
 Land, other hulls, buoys, and the committee boat are solid. A shallow approach slows and slides the boat along shore; lowering the centerboard requires more clearance. Hitting a mark or another boat during a race can require the existing sailed penalty turn. Crew automatically crouch before a crossing boom and stay within the molded cockpit and rail.
 

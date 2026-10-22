@@ -87,27 +87,27 @@ describe('NPR island and water meshes', () => {
     expect(checked).toBeGreaterThan(1000);
     patch.dispose();
   });
-  it('shares the same interpolated 3D edge between the fine sea and distant sea', () => {
-    const near = createSeaPatch(360, 96), far = createSeaPatch(1200, 60, 180, near.boundary);
+  it.each([[72, 60], [96, 60], [144, 100]])('shares the same interpolated height and color edge at quality %i/%i', (nearSegments, farSegments) => {
+    const near = createSeaPatch(360, nearSegments), far = createSeaPatch(1200, farSegments, 180, near.boundary);
     const settings = { ...DEFAULT_SETTINGS, windSpeedKnots: 20, gusts: false, shifts: false };
     near.update(0, 0, 7, settings); far.update(0, 0, 7, settings);
     for (const axis of ['x', 'z'] as const) for (const side of [-1, 1]) {
       const edge = (geometry: THREE.BufferGeometry) => {
-        const position = geometry.getAttribute('position'), points = new Map<number, number>();
+        const position = geometry.getAttribute('position'), color = geometry.getAttribute('color'), points = new Map<number, number[]>();
         for (let i = 0; i < position.count; i++) {
           const across = axis === 'x' ? position.getX(i) : position.getZ(i), along = axis === 'x' ? position.getZ(i) : position.getX(i);
-          if (across === side * 180 && Math.abs(along) <= 180) points.set(along, position.getY(i));
+          if (across === side * 180 && Math.abs(along) <= 180) points.set(along, [position.getY(i), color.getX(i), color.getY(i), color.getZ(i)]);
         }
         return [...points].sort((a, b) => a[0] - b[0]);
       };
       const a = edge(near.mesh.geometry), b = edge(far.mesh.geometry);
-      const height = (points: number[][], x: number) => {
+      const sample = (points: [number, number[]][], x: number, channel: number) => {
         const right = points.findIndex(point => point[0] >= x);
-        if (right === 0) return points[0][1];
+        if (right === 0) return points[0][1][channel];
         const [x0, y0] = points[right - 1], [x1, y1] = points[right];
-        return y0 + (y1 - y0) * (x - x0) / (x1 - x0);
+        return y0[channel] + (y1[channel] - y0[channel]) * (x - x0) / (x1 - x0);
       };
-      for (let x = -180; x <= 180; x += .75) expect(height(a, x)).toBeCloseTo(height(b, x), 5);
+      for (let x = -180; x <= 180; x += .75) for (let channel = 0; channel < 4; channel++) expect(sample(a, x, channel)).toBeCloseTo(sample(b, x, channel), 6);
     }
     near.dispose(); far.dispose();
   });
@@ -130,5 +130,22 @@ describe('NPR island and water meshes', () => {
       expect(actual.getZ(i)).toBeCloseTo(expected.getZ(i), 6);
     }
     reference.dispose(); patch.dispose();
+  });
+  it('adds distinct shallow-water hues without changing physical wave height', () => {
+    setTerrainSeed(420); configureTerrainCourse(null); protectTerrainPoints([]);
+    const patch = createSeaPatch(360, 72); patch.update(120, -60, 3, DEFAULT_SETTINGS);
+    const color = patch.mesh.geometry.getAttribute('color'), position = patch.mesh.geometry.getAttribute('position');
+    const deep: number[] = [], shallow: number[] = [];
+    for (let i = 0; i < position.count; i++) {
+      const depth = getTerrainHeight(position.getX(i) + 120, position.getZ(i) - 60), hue = color.getY(i) / color.getZ(i);
+      if (depth < -7) deep.push(hue);
+      else if (depth > -2 && depth < 0) shallow.push(hue);
+    }
+    expect(deep.length).toBeGreaterThan(100); expect(shallow.length).toBeGreaterThan(5);
+    expect(Math.min(...shallow)).toBeGreaterThan(Math.max(...deep) + .2);
+    const heights = Array.from(position.array), colors = Array.from(color.array);
+    configureTerrainCourse({ windDirectionDeg: 90, length: 300 }); patch.invalidateTerrain(); patch.update(120, -60, 3, DEFAULT_SETTINGS);
+    expect(Array.from(position.array)).toEqual(heights); expect(Array.from(color.array)).not.toEqual(colors);
+    configureTerrainCourse(null); patch.dispose();
   });
 });

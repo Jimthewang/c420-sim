@@ -32,6 +32,7 @@ export function createCameraRig(canvas: HTMLCanvasElement) {
     tactical: { yaw: 0, pitch: Math.PI / 2 - .015, distance: 180, pan: new THREE.Vector3() },
   };
   let mode: CameraMode = 'chase';
+  let showcase: { yaw: number; time: number; reducedMotion?: boolean } | null = null;
   const followsBoat: Record<CameraMode, boolean> = { chase: true, diorama: true, tactical: false };
   let initialized = false;
   let pointer: { id: number; x: number; y: number; pan: boolean } | null = null;
@@ -42,7 +43,7 @@ export function createCameraRig(canvas: HTMLCanvasElement) {
   let lastUpdate = performance.now();
 
   function pointerDown(event: PointerEvent) {
-    if (event.button > 2) return;
+    if (showcase || event.button > 2) return;
     pointer = { id: event.pointerId, x: event.clientX, y: event.clientY, pan: event.button !== 0 || event.shiftKey };
     canvas.setPointerCapture(event.pointerId);
     canvas.focus({ preventScroll: true }); event.preventDefault();
@@ -69,6 +70,7 @@ export function createCameraRig(canvas: HTMLCanvasElement) {
   }
   function wheel(event: WheelEvent) {
     event.preventDefault();
+    if (showcase) return;
     const delta = event.deltaY * (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? canvas.clientHeight : 1);
     views[mode].distance = THREE.MathUtils.clamp(views[mode].distance * Math.exp(delta * .0015), 4, 180);
   }
@@ -86,12 +88,31 @@ export function createCameraRig(canvas: HTMLCanvasElement) {
   return {
     camera,
     reset,
+    setShowcase(value: typeof showcase) {
+      if (!!showcase !== !!value) { pointer = null; initialized = false; camera.clearViewOffset(); canvas.style.cursor = value ? 'default' : 'grab'; }
+      showcase = value;
+    },
     resize(width: number, height: number) { camera.aspect = width / height; camera.updateProjectionMatrix(); },
     update(state: BoatState, nextMode: CameraMode, _dt: number, settings: SailingSettings, course?: RenderCourse | null) {
       // Navigation remains live while sailing is paused, without advancing simulation time.
       const now = performance.now();
       const delta = Math.min(.05, Math.max(1 / 240, (now - lastUpdate) / 1000)); lastUpdate = now;
       const ease = 1 - Math.exp(-delta * 9);
+      if (showcase) {
+        const width = Math.max(1, canvas.clientWidth), height = Math.max(1, canvas.clientHeight);
+        const narrow = width <= 760, drift = showcase.reducedMotion ? 0 : Math.sin(showcase.time * .08) * .025;
+        const hero = new THREE.Vector3(state.position.x, 2.7, state.position.z);
+        camera.fov = 42; camera.aspect = width / height;
+        const sceneHeight = Math.max(50, height * .32 - 80);
+        const distance = narrow ? 7.3 / (2 * Math.tan(21 * Math.PI / 180)) * height / sceneHeight : 16;
+        camera.position.copy(orbitPosition(hero, showcase.yaw + drift, .14, distance));
+        const wind = sampleWind(camera.position.x, camera.position.z, state.time, settings);
+        const wave = getWaveHeight(camera.position.x, camera.position.z, state.time, wind.speed / KNOTS_TO_MPS, wind.direction);
+        clampCameraToSurface(camera.position, wave.height, getTerrainHeight(camera.position.x, camera.position.z));
+        camera.lookAt(hero);
+        camera.setViewOffset(width, height, narrow ? 0 : -width * .22, narrow ? height * .34 - 40 : 0, width, height);
+        camera.updateProjectionMatrix(); return;
+      }
       if (mode !== nextMode) { mode = nextMode; pointer = null; }
       const view = views[mode];
       home.set(state.position.x, .75, state.position.z);
